@@ -1,0 +1,754 @@
+ZÁPADOČESKÁ UNIVERZITA V PLZNI 
+Fakulta elektrotechnická 
+Katedra materiálů a technologií 
+BAKALÁŘSKÝ PROJEKT 
+PocKETlab 
+Autor práce:  
+Jiří Švihla 
+
+2025 
+PocKETlab 
+Jiří Švihla    2025 
+ZADÁNÍ ZÁVĚREČNÉHO BAKALÁŘSKÉHO 
+PROJEKTU 
+Fakulta elektrotechnická 
+Katedra materiálů a technologií 
+Jméno a příjmení: Jiří Švihla 
+
+Téma práce: 
+Systém pro podporu laboratorních úloh založených na vzdáleném 
+parametrickém měření reálných součástek, kontrolovaný 
+mikrokontrolerem. 
+Zásady pro vypracování: 
+Systém bude obsahovat část obsahující dokumentaci/zadání, která bude realizována 
+prostřednictvím markdown a část, která bude interaktivní. Systém dále umožní 
+multiuživatelskou správu a detekci přihlášeného uživatele a automatické odhlášení po nějaké 
+době nečinnosti. 
+Systém/modul pro práci s reálným zařízením umožní vzdálené parametrické automatizované 
+měření s konkrétním přípravkem, který bude vyvinut během práce na tomto projektu. 
+
+
+
+Abstrakt 
+Tato práce se zabývá návrhem jednoduchého charakterografu kapesní velikosti určeného 
+k měření V-A, frekvenčních a dalších charakteristik na aktivních i pasivních dvojbranech (a 
+jim podobným obvodům). 
+V rámci udržení jednoduchosti návrhu a přijatelné uživatelské přívětivosti se práce omezuje 
+na nízkofrekvenční aplikace a provoz na malém napětí. 
+Zařízení je založeno na platformě ESP32-S3 (4MB Flash + 2MB PSRAM), napájeno pomocí 
+USB Power Delivery 3.2 (do 20V@60W s podporou PPS) a je vybaveno 12-bit A/D a D/A 
+převodníky s rychlostí 100ks/s. Pro měření V-A a zatěžovacích charakteristik je vybaveno 
+napájecím i zátěžovým kanálem s možností lineární i pulzní regulace. 
+Klíčová slova 
+Charakterograf, ESP32, USB PD, Power Delivery, PPS, ADC, DAC, Lineární stabilizace, 
+Spínaná zátěž 
+Abstract 
+This thesis focuses on electrical design of a simple, pocket-sized curve tracer intended for 
+V-A, frequency and other characteristics on active and passive two-port (and similar) 
+networks. 
+To achieve simplicity of the design and user friendliness of the device, this thesis restricts to 
+very low voltage and low frequency signals. 
+The device is built on ESP32-S3 platform (with 4MB of Flash and 2MB of PSRAM), 
+powered from USB Power Delivery 3.2 (up to 20V@60W with PPS support) and is equipped 
+with 12-bit A/D and D/A converters achieving speeds up to 100ksps. For V-A and power 
+load characteristics, the device is also equipped with power and sink circuitry (with linear 
+and pulse regulation support). 
+Key Words 
+Curve tracer, ESP32, USB PD, Power Delivery, PPS, ADC, DAC, Linear stabilisation, Sink 
+controller 
+
+ 
+ 
+Obsah 
+Úvod ................................................................................................................................. - 1 - 
+1 Specifikace cílových požadavků na zařízení ............................................................ - 2 - 
+1.1 Specifikace napájecího systému ....................................................................... - 3 - 
+1.2 Specifikace měřícího systému .......................................................................... - 4 - 
+1.3 Specifikace řízení ............................................................................................. - 5 - 
+1.4 Specifikace řídící aplikace ................................................................................ - 5 - 
+2 Koncepce hardwarové části ...................................................................................... - 6 - 
+2.1 Přehled .............................................................................................................. - 6 - 
+2.2 Napájecí kaskáda a Power Delivery ................................................................. - 7 - 
+2.3 Řídící a komunikační jednotka ......................................................................... - 8 - 
+2.4 Výkonové a signálové výstupy ......................................................................... - 9 - 
+2.5 Signálové vstupy ............................................................................................ - 11 - 
+3 Uživatelská aplikace ............................................................................................... - 13 - 
+Závěr ............................................................................................................................... - 16 - 
+Literatura ........................................................................................................................ - 17 - 
+Seznam obrázků .............................................................................................................. - 20 - 
+ 
+ 
+Seznam symbolů a zkratek 
+Obecné zkratky 
+nf  
+vf  
+V-A  
+HW  
+SW  
+EK  
+BOM  
+el.  
+RGB  
+MVP  
+PNG  
+MQTT  
+nízkofrekvenční (signály) 
+vysokofrekvenční (signály) 
+Volt-Ampérové (charakteristiky) 
+Hardware 
+Software 
+Evropská Komise 
+Bill Of Materials (kusovník použitého materiálu) 
+Elektronických 
+Red, Green, Blue 
+Minimum Viable Product 
+Portable Network Graphics 
+Message Queue Telemetry Transport 
+Zkratky a označení týkající se USB-C 
+USB-C  
+PD  
+SPR  
+EPR  
+E-Mark  
+PPS  
+AVS  
+Universal Serial Bus, type C 
+Power Delivery 
+Standard Power Range (standartní výkonový rozsah) 
+Extended Power Range (rozšířený výkonový rozsah) 
+Electronic Mark, čip ověřující možnost přenosu 5 A kabelem 
+Programmable Power Supply (programovatelný zdroj) 
+Adjustable Voltage Supply (regulovatelný zdroj) 
+Elektrotechnické zkratky a značky 
+A/D  
+D/A  
+SAR  
+NTC  
+PTC  
+MOS  
+FET  
+TDP  
+AC  
+DC  
+MCU  
+SOC  
+IIC/I2C  
+SPI  
+Analogově-Digitální (převodníky) 
+Digitálně-Analogové (převodníky) 
+Successive Approximation (aproximační A/D převodník) 
+Negative Thermal Coefficient (záporný tepelný koeficient) 
+Positive Thermal Coefficient (kladný tepelný koeficient) 
+Metal Oxide Semiconductor 
+Field Effect Transistor (polem řízený transistor) 
+Thermal Dissipated Power (vyzářený tepelný výkon) 
+Alternating Current (střídavý proud) 
+Direct Current (stejnosměrný proud) 
+Micro Controller Unit (mikrokontroler) 
+System On a Chip 
+Inter-Integrated circuit 
+Serial Peripheral Communication 
+EMI  
+PFM  
+RAM  
+ROM  
+Flash  
+PSRAM  
+OZ/OPAMP  
+CC  
+CV  
+LED  
+Electro-Magnetic Interference (elektromagnetické rušení) 
+Pulse Frequency Modulation (pulzně frekvenční modulace) 
+Random Access Memory 
+Read Only Memory 
+Paměť ROM typu Flash 
+Pseudostatic RAM 
+Operační Zesilovač 
+Continuous Current (proudové řízení) 
+Continuous Voltage (napěťové řízení) 
+Light Emitting Diode 
+Zkratky ve spojitosti se starší technikou 
+PC  
+AT  
+XT  
+MS  
+BASIC  
+Personal Computer (osobní počítač) 
+Advanced Technology (ve spoj. s IBM PC) 
+eXTended (ve spoj. s IBM PC) 
+Microsoft 
+Beginner's All-purpose Symbolic Instruction Code 
+Zkratky a označení základních elektrických veličin 
+�
+� 
+�
+� 
+�
+� 
+�
+�𝑅  
+�
+� 
+V 
+A 
+W 
+Hz 
+Napětí 
+Proud 
+Činný výkon 
+Relativní permitivita (bezrozměrná veličina) 
+Frekvence 
+Materiálové zkratky a symboly 
+FR-4  
+PCB  
+sklolaminátový substrát, základ PCB 
+Printed Circuit Board 
+ÚVOD 
+Úvod 
+Jako student, učitel a volnočasový konstruktér elektronických zařízení se často setkávám 
+s potřebou měření různých charakteristik použitých součástek – ať už pro svoji či pracovní 
+potřebu. Mít ovšem „malou domácí elektronickou laboratoř“ je dosti nákladné a až 
+v nedávné době jsem si pořídil stolní digitální osciloskop. S vestavěným generátorem 
+signálu.  Často ovšem dále narážím na potřeby zesílení tohoto výstupu (kvůli výstupní 
+impedanci gen.), potřebě připojení dalšího kanálu, externího napájení apod. 
+Z pohledu technika běžná praxe, ovšem mít tolik zařízení ve svém vlastnictví je nákladné 
+a hlavně náročné i na místo kvůli skladování, ale i při měření, což mi potvrzují i moji žáci. 
+Často ovšem není třeba nikterak přesných měřících přístrojů a často by stačil A/D a D/A 
+konvertor s regulovatelným zdrojem. 
+V průběhu studia na SŠ jsem často čerpal inspiraci ze starších i aktuálních vydání časopisu 
+Amatérské Rádio, primárně z konstrukčních (modrých) vydání, kde se kromě 8/16-ti 
+bitových osobních počítačů (1/1989 B,1/1988 B), digitronových stopek (12/1974 A) a 
+spousty dalších zapojení vyskytla i konstrukce měřících A/D a D/A převodníků k PC AT/XT 
+s komunikací přes paralelní port a ovládacím SW v MS BASICu. A jelikož digitální 
+osciloskopy a programovatelné zdroje (napájecí i signálové) jsou dnes již běžnou praxí, proč 
+si nevyrobit svůj s trochou „modernizačních“ úprav, které jsou dále v této práci zmíněny. 
+Díky neustálému vývoji nových technologií a standardů (včetně ústupu od LPT a BASICu) 
+je možné celé zařízení stavět mnohem kompaktněji a vybavit jej např. převodníky s vyšším 
+rozlišením i rychlostí, napájením přes USB-C či konektivitou WiFi a webovým rozhraním. 
+Dále lze pak pokračovat jinými praktickými funkcemi, jako je např. programovatelný 
+napájecí zdroj, spínaná zátěž apod. 
+Takové zařízení je vhodné i pro žáky a studenty škol technického směru, a to nejen pro 
+měření charakteristik elektronických součástek a obvodů, ale také např. pro galvanické 
+pokovování apod. - 1 - 
+SPECIFIKACE CÍLOVÝCH POŽADAVKŮ NA ZAŘÍZENÍ 
+1 Specifikace cílových požadavků na zařízení 
+Z koncepce vyplívá rozdělení zařízení na 3 části: 
+• Řídící část zajišťující komunikaci a ovládání všech nastavení zařízení, včetně 
+nastavení provozních hodnot a ochran proti přetížení. 
+• Měřící (analyzační část) sestávající z A/D a D/A převodníků a jim přidělených 
+zesilovačů a filtrů. 
+• Napájecí (spínací) část, schopná měřené prvky  
+Obr.  1 - Zjednodušené blokové schéma zařízení 
+Takto navržené zařízení by mělo být vhodné pro většinu základních měření, jako jsou: 
+• V-A charakteristiky diod 
+• Teplotní závislosti NTC a PTC prvků (při přidání topného tělesa) 
+• Měření zesílení tranzistorů 
+• Frekvenční charakteristiky aktivních i pasivních nf filtrů 
+• Zatěžovací charakteristiky usměrňovačů 
+• Průběhy (pomalejších) přechodových dějů - 2 - 
+SPECIFIKACE CÍLOVÝCH POŽADAVKŮ NA ZAŘÍZENÍ 
+1.1 Specifikace napájecího systému 
+Napájecí kaskáda zařízení musí být schopna dosáhnout provozních napětí a proudů 
+základních el. prvků, pro jejichž měření je zařízení určeno. Ve své praxi (při práci na malém 
+napětí) se většinou setkávám se zapojeními navrženými pro provoz do napětí 12 V, max. 
+pak do 24 V (používaných v industriálním prostředí) a proudu cca do 1-2 A. Celkový 
+ztrátový výkon tedy nepřesáhne 60 W, což je i maximální ztrátový výkon pro napájení skrze 
+USB-C (bez EPR a bez E-Mark čipu v propojovacím kabelu) s použitím protokolu PD 3.x 
+(viz Tab.1) 
+Tab. 1 - Přehled napájecích rozsahů USB PD 
+PD 3.2 
+Nap. napětí [V] 
+SPR 
+20 
+SPR+E-Mark 
+20 
+EPR+E-Mark 
+Přenášený proud [A] 
+48 
+Ztrátový výkon [W] 
+3 
+60 
+5 
+100 
+5 
+240 
+Výběr USB-C jako napájecího standardu pro toto zařízení také dále dovoluje využití široce 
+dostupných napájecích zdrojů pro mobilní zařízení včetně powerbank, což je nejen 
+praktické, ale také vyhovující myšlence „jednotné nabíječky“ nařízené direktivou EK 
+2022/2380, ačkoliv se na toto zařízení nevztahuje. 
+Regulace výstupního napětí PD zdroje je buď možná krokově (hladiny 5, 9, 12, 15, 20 V), 
+nebo za pomoci protokolů PPS a AVS pro jemné krokování (PPS: 20 mV, AVS: 100 mV). 
+Zde ovšem velmi záleží na konstrukci napájecího zdroje, jelikož možnosti regulace buď 
+nemusejí být přítomny vůbec anebo jen v omezené míře (např. pouze pro rozsah 4-11 V). 
+Zařízení tedy musí být vybaveno vlastním regulovatelným zdrojem (ideálně s možností 
+lineární, ale i spínané regulace pro vyšší efektivitu), který musí být schopen operovat 
+s dostatečnou přesností v rozsahu 0-20 V. Možnost proudové regulace je pak pro nelineární 
+komponenty také velmi praktická. - 3 - 
+SPECIFIKACE CÍLOVÝCH POŽADAVKŮ NA ZAŘÍZENÍ 
+Druhou částí napájecího systému je pak možnost spínané zátěže, která dovolí testování 
+zatěžovacích charakteristik baterií, DC/DC konvertorů, lin. stabilizátorů a různých spínacích 
+prvků. Samozřejmostí je potřeba regulace ztrátového výkonu proudově či napěťově (ideálně 
+obojím). 
+1.2 Specifikace měřícího systému 
+Měřící systém je zodpovědný za buzení měřeného obvodu a měření jeho odezvy ve 
+zvoleném spektru (napěťovém, frekvenčním, …). V případě potřeby regulace vyššího 
+výkonu u by byla vhodná možnost zesílení výstupu (či spojení s regulovatelnou napájecí 
+kaskádou). Měřící systém by měl mít také stejné (nebo vyšší) rozlišení vstupu než výstupu 
+a mělo by být dostatečně jemné pro reálné použití, nikoliv jako „technické demo“ které 
+nastíní koncepty, ale výstupy jsou „zralé na reálné měření“.  
+Dále je praktická konstrukce se dvěma signálovými vstupy a výstupy, jednak k zapojení 
+vstupu v pseudo-diferenciálním módu, ale i pro testování např. nf směšovače či stereo 
+zesilovače. 
+Obr.  2 - Zjednodušené blokové schéma s rozdělenou měřící částí - 4 - 
+SPECIFIKACE CÍLOVÝCH POŽADAVKŮ NA ZAŘÍZENÍ 
+1.3 Specifikace řízení 
+Celé zařízení by mělo být řízeno moderním mikropočítačem s dostatečnou velikostí paměti 
+a rychlostí pro využití plného potenciálu měřících a generátorických převodníků. Dále by 
+také měl být vybaven vlastním (vestavěným) A/D převodníkem pro kontroly napětí 
+v různých částech zařízení, což by dovolilo kontrolu chyb a usnadnilo hledání případných 
+závad. Zde již není potřeba nikterak vysoká přesnost či linearita, jelikož se jedná pouze o 
+kontrolní mechanismus. 
+Dále by bylo vhodné, aby bylo MCU vybaveno USB řadičem pro přímé propojení s PC a 
+konektivitou WiFi/Bluetooth pro vzdálené připojení.  
+Obr.  3 - Zjednodušené blokové schéma zařízení z pohledu MCU 
+1.4 Specifikace řídící aplikace 
+Aplikace pro řízení tohoto zařízení by měla být přehledná a jednoduchá. Měla by dovolovat 
+uživateli zobrazovat měřená data (ideálně i v reálném čase), ukládat charakteristiky a 
+nastavovat parametry měření. Dále by také měla být optimalizována pro mobilní zařízení 
+(např. pro tablety či chytré telefony).  - 5 - 
+KONCEPCE HARDWAROVÉ ČÁSTI 
+2 Koncepce hardwarové části 
+2.1 Přehled 
+Zařízení je celkově rozděleno do několika menších celků pro lepší přehlednost (viz 
+podkapitoly dále). Každá část pak obsahuje min. jednu klíčovou komponentu a její podpůrné 
+obvody. Těmito klíčovými komponentami jsou: 
+• ESP32-S3 jakožto řídící jednotka celého zařízení 
+• CH224Q/K pro řízení Power Delivery 
+• MCP3202 je 2x 12-bit A/D převodník 
+• MCP4822 je 2x 12-bit D/A převodník 
+Komunikace po desce je řešena pomocí vnitřní IIC a SPI linky. Na IIC lince je připojen čip 
+pro řízení PD a konektor pro malý stavový displej. SPI je pak použito pro vysokorychlostní 
+komunikaci s A/D a D/A převodníky. 
+Obr.  4 - blokové schéma navrženého zařízení 
+U napájecích kontaktů jsou pro potlačení přechodových jevů při skokovém nárůstu odběru 
+jednotlivých obvodů (hlavně při komunikaci přes WiFi, měření apod.) umístěny filtrační 
+keramické kondenzátory, většinově ve složení dvojice 10𝜇𝐹 + 100𝑛𝐹. - 6 - 
+KONCEPCE HARDWAROVÉ ČÁSTI 
+Poznámka: Každá z těchto podkapitol (3.x) se věnuje jedné číselně korespondující straně 
+schématu1) 
+Na desce je také implementována kontrola teploty formou konektoru pro NTC a ventilátor 
+o rozměrech 20x20mm. 
+V přední části jsou umístěny stavové RGB LED diody a IIC konektor pro případný stavový 
+displej či jinou periferii. 
+Obr.  5 - Vizualizace konceptu (spodní strana) 
+2.2 Napájecí kaskáda a Power Delivery 
+Cílem napájecí kaskády je ESD ochrana USB portu, napájení řídících prvků a nastavení USB 
+PD.  
+USB-C konektor je zapojen dle specifikace pro USB 2.0 s alternativním módem (piny SBU1 
+a SBU2)2 pro komunikaci např. s vlastním programovatelným zdrojem nebo jiným 
+zařízením. Tato externí linka je zapojená samostatně. Všechny datové linky jsou pak 
+chráněny proti ESD transilovým polem certifikovaným do 25kV se závěrným napětím 6,1V, 
+1Viz příloha I, str. 1-5 
+2Viz literatura (15), sekce 6 - alternativní módy USB-C - 7 - 
+KONCEPCE HARDWAROVÉ ČÁSTI 
+všechny vnitřní komponenty jsou pak certifikovány pro 2kV. Napájecí linky jsou chráněny 
+odděleně kvůli zvýšenému napětí. 
+Řízení Power Delivery je řešeno třemi způsoby – řadičem s podporou PPS, řadičem bez 
+podpory PPS a „jednoduchými rezistory“. Cílem tohoto rozhodnutí bylo připravit více 
+možností pro výrobu při případných problémech (např. z důvodu vysoké poptávky po 
+určitém typu). 
+V tomto návrhu byly použity řadiče z rodiny CH2243 (var. K a Q). Jedná se o známý a levný 
+řídící čip podporující širokou škálu standardů. V nedávné době do této rodiny přibyla i var. 
+Q s podporou komunikace přes IIC a možností vyžádání PPS/AVS. Nahradila tak 
+zastarávající čip CH224A s podobnými možnostmi. Varianta K je nejrozšířenější (také kvůli 
+své ceně), bez podpory PPS/AVS. Zbylý napěťový rozdíl je pak třeba dorovnat 
+stabilizátorem (více v sekci. 3.4), což snižuje efektivitu napájecího systému a toto řešení je 
+tedy určeno pouze pro případy nedostatku var. Q u výrobce PCB.4 
+Poslední možností je pak osazení 5,1𝑘Ω5 rezistorů. Jedná se spíše o „nouzový mód“ 
+v případě problémů s řadiči PD. Toto řešení ovšem omezí napájení na 5V 3A s USB-C 
+zdroji. Funkci programovatelného napájení by pak bylo možné obnovit externím řadičem 
+využívajícím ke komunikaci s MCU piny pro alternativní mód USB-C. 
+Druhou částí napájecí kaskády je DC/DC měnič pro napájení klíčových komponent. Zde byl 
+použit čip AP632036 s integrovaným výkonovým spínáním a funkcí potlačení EMI. Ten byl 
+vybrán na základě zkušeností z jiného projektu díky své jednoduchosti a vysoké efektivitě 
+konverze i při velmi nízkých odběrech. Zároveň také podporuje PFM a FSS pro zvýšení 
+účinnosti a potlačení rušení.  
+2.3 Řídící a komunikační jednotka 
+Celé zařízení ovládá SOC ESP32-S3 (model FH4R27 s integrovanou 4MB Flash a 2MB 
+PSRAM). Varianta S3 je vybavena dvoujádrovým 32-bit LX7 CPU s taktem 240MHz, 
+2,4GHz WiFi a Bluetooth a řadiči IIC, SPI, UART, USB a dalších. Také má vestavěné A/D 
+3Viz literatura (26) 
+4V průběhu vývoje došlo k vyprodání naprosté většiny var. Q u předních světových prodejců el. komponent 
+5Viz literatura (15), sekce 3.2, tab. 7 – platné hodnoty pull-down rezistorů pro DFP 
+6Viz literatura (7) 
+7Viz literatura (8), sekce 1.2, tab. 1-1 – porovnání jednotlivých modelů ESP32-S3 - 8 - 
+KONCEPCE HARDWAROVÉ ČÁSTI 
+a D/A převodníky, z nichž ADC1 je použit pro kontrolu napětí na desce a výstupech. ADC2 
+je multiplexován s WiFi rozhraním a nemůže být při její funkci použit.8 Tyto převodníky, 
+ačkoliv také 12-ti bitové, nemohly být pro měření vstupních signálů použity z důvodu 
+vysoké nelinearity měření ve vyšší polovině napěťového rozsahu (cca od 2V). Signály jsou 
+tedy spíše „referenční“ a kontrolují funkci ostatních periferií, nikoliv jejich přesnost. 
+Pro konektivitu je v levé horní části umístěna SMD anténa. Zde je první část PCB s řízenou 
+impedancí kvůli vedení vf signálu. Cesty, šíře izolační mezery a vnitřní vrstvy jsou navrženy 
+na 50Ω impedanci při frekvenci 2400MHz. Pro lepší příjem je na doporučení výrobce 
+v signálové cestě zapojen C-L-C článek typu π pro lepší impedanční přizpůsobení na vstupní 
+pin čipu (LNA_IN).9 Pro přesné nalazení C-L-C článku výrobce doporučuje vlastní měření 
+kvůli odlišným výrobním procesům u výrobců PCB. V tomto případě bylo využito 
+postupných praktických testů („Něco tam dám a uvidím co to udělá“ – pozn. autora). Díky 
+nízkým přenosovým rychlostem je však zapojení „relativně benevolentní“. 
+Dále je v blízkosti SOC umístěn 40MHz krystal. SOC je pak vybaven budícími obvody a 
+interní programovatelnou násobičkou. 
+Druhá část PCB s řízenou impedancí je vedení datových linek USB. Zde jde o diferenciální 
+pár a na doporučení výrobce SOC jsou na lince umístěny dva 0Ω rezistory.10 
+2.4 Výkonové a signálové výstupy 
+Zařízení je vybaveno dvěma dvoukanálovými 12-bit D/A konvertory (pro výkonovou a 
+signálovou část zvlášť) MCP482211 s interní napěťovou referencí a max. vzorkovací 
+frekvencí 100kHz (při 5V napájení). Výstupy jsou opatřeny 10𝑛𝐹 kondenzátory pro 
+potlačení vyšších harmonických signálů.12 
+Pro zesílení signálu je zde využit obvod LM324 (4x OZ) napájený přímo z napájecího 
+vstupu. Analogové výstupy z D/A převodníku B jsou zapojeny na jednotky C a D OZ se 
+zesílením 6,7x (16,5dB), s odbočkou pro případnou úpravu zesílení. Ta je společně 
+s výstupem vyvedena na výstupní konektor J3. Lze tak docílit velmi jemného rozlišení na 
+8Viz literatura (8), sekce 4.2.2.1 – SAR ADC 
+9Viz literatura (3), sekce 1.4.5 – RF 
+10 Viz literatura (3), sekce 1.3.13 – USB 
+11 Viz literatura (23) 
+12 Viz literatura (23), sekce 6.3 – zohlednění výstupního šumu - 9 - 
+KONCEPCE HARDWAROVÉ ČÁSTI 
+sig. Výstupech, což je vhodné např. pro testování nf mikrofonních předzesilovačů. Zesílení 
+lze ladit v rozmezí 2 - 6,7 dle vzorce (1) připojením 𝑅𝐴𝑅𝐹𝑥 mezi piny DACx a ARFx: 
+�
+�𝑢 =6,7−
+ 2209
+ 10 ∙ (𝑅𝐴𝑅𝐹𝑥 +47)
+ (1) 
+Použité A/D převodníky mají také programovatelný výstupní zesilovač s možností volby 
+plného nebo polovičního rozsahu. Výstupní rozlišení lze zjistit dle vzorce (2): 
+�
+�𝑀𝐴𝑋𝑅𝐸𝑆 = 𝑟𝑜𝑧𝑠𝑎ℎ ∙ 3,3
+ 212 −1
+ ∙ 𝐴𝑢 = 1
+ 2
+ ∙ 3,3
+ 4096 −1
+ ∙ 2 = 806𝜇𝑉 
+(2) 
+Při výstupním rozsahu 0-3,3V. Stejným postupem pak lze zjistit rozlišení pro plný 
+rozsah = 5,4mV. 
+Výstupní konektor J3 je dále opatřen několika piny s nulovým potenciálem, vyvedeným 
+napájením (3.3V z DC/DC měniče i přímým napájením z USB), čtyřmi GPIO piny a 
+výkonovými výstupy. Pin 16 pak zůstal nevyužit jako ochrana proti převrácení měřících 
+přípravků. 
+Výstupní (výkonové) regulátory jsou řízeny D/A převodníkem A. Obě poloviny zde splývají 
+v jeden komplexnější regulátor s komplementární dvojicí výkonových tranzistorů typu 
+MOSFET, kde napájecí část je zapojena v režimu CV a zátěž v režimu CC13 referenčně vůči 
+zemi.14 Zařízení tedy není schopné okamžitě přepínat mezi CC a CV módy a zpětná vazba 
+ref. napětí na spínané zemi je realizována digitálně15. Jedná se o malý kompromis mezi 
+komplexitou zapojení a jeho univerzálností. U zařízení se nepředpokládá časté přecházení 
+mezi CC/CV módy a může tedy při přechodu dojít k poklesu výstupního napětí než 
+zareaguje MCU. 
+13 Viz literatura (23), sekce 6.9 – programovatelný proudový zdroj 
+14 Ve smyslu sítě GND použité jako zemnící i napájecí (záporný pól napájení) 
+15 Pro zpětnou kontrolu napětí na VOUT a GOUT jsou připojeny sítě RV0 a RV1 na A/D převodník MCU - 10 - 
+KONCEPCE HARDWAROVÉ ČÁSTI 
+ - 11 - 
+2.5 Signálové vstupy 
+Klíčovou komponentou signálových vstupů je dvoukanálový 12-bit A/D převodník 
+MCP320216 se vzorkovací frekvencí 100kHz (při 5V napájení). A/D převodníky jsou také 
+vybaveny programovatelnou odbočkou z interní nap. reference a lze tak upravit zesílení na 
+vybraném vstupu (buď plný nebo poloviční rozsah). Na oba jeho vstupy jsou připojeny 
+aktivní filtry (dolní propusti) druhého řádu typu Butterworth-Bessel. Propustné pásmo je zde 
+nastaveno na 10kHz (viz Fig. 1). 
+ 
+ 
+Fig. 1 - Útlum aktivní filtrace vstupních zesilovačů (modře) a vyznačené pásmo B3 (oranžově) 
+ 
+Zesílení vstupních OZ (U7A a U7B) je možné kalibrovat připojením rezistoru na vstupy 
+AREFx, které v případě nevyužití MUSÍ BÝT UZEMĚNY, jinak dojde k vychýlení 
+zesílení a zařízení bude měřit chybně. V případě potřeby kalibrace je možné zesílení těchto 
+článků upravit dle vzorce (3). 
+�
+�𝑢=10
+ 78 ∙1+( 10000
+ 𝑅𝑅𝐸𝐹+68000) (3) 
+ 
+ 
+16 Viz literatura (22) -25-20-15-10-5
+ 0
+ 5
+ 0,1 1 10 100
+ Au [dB]
+ Frekvence [kHz]
+KONCEPCE HARDWAROVÉ ČÁSTI 
+Vstupy AREFx jsou ovšem primárně určeny k napěťovému posuvu vstupů. V případě 
+potřeby přesného měření napětí v malém rozsahu – viz příklad: 
+Na měřeném přípravku je třeba měřit výstupní napětí s vysokou přesností v rozmezí 
+14 - 17V. V takovém případě lze připojit referenční napěťový zdroj (třeba 12V) a na A/D 
+převodníku nastavit poloviční rozsah.  
+Vstupní zesilovače jsou navrženy s malou napěťovou rezervou a při vstupním napětí 20V 
+nebude využit plný 12-ti bitový rozsah převodníku (horní hranice rozsahu je dána napájecím 
+napětím 3,3V). Maximální výstupní napětí ze zesilovačů lze vypočítat s využitím vzorce 
+výše (3), 𝑅𝑅𝐸𝐹 = 0Ω: 
+�
+�𝐴𝐶𝐻𝑥 = 𝑈𝐴𝐼𝑁𝑥 ∙ 𝐴𝑢 = 20∙0,1471 = 2,941𝑉 
+(4) 
+Porovnáním s napájecím napětím A/D převodníku a jeho rozsahem pak dostaneme 
+skutečnou nejvyšší výstupní hodnotu (5): 
+�
+�𝑂𝑈𝑇 = 𝑈𝐴𝐶𝐻𝑥
+ 3,3
+ ∙ 212 = 2,941
+ 3,3
+ ∙ 4096 = 3651 
+A ze skutečného rozsahu pak lze zjistit napěťové rozlišení (6): 
+�
+�𝑅𝐸𝑆 = 𝑈𝐴𝐼𝑁𝑥
+ 𝑛𝑂𝑈𝑇
+ = 20
+ 3651
+ =5,48 𝑚𝑉 
+(5) 
+(6) 
+V případě využití poloviny rozsahu pak lze rozlišení zvýšit na 2,74mV, případně pak ruční 
+úpravou hodnoty R32 a R33 na nižší hodnotu.  - 12 - 
+UŽIVATELSKÁ APLIKACE 
+3 Uživatelská aplikace 
+Software pro vyvíjenou platformu se skládá ze dvou částí – uživatelského rozhraní pro 
+správu zařízení a firmware běžícího na desce. Ten se pak stará již o samotné řízení periferií 
+apod. Komunikace je realizována pomocí protokolu MQTT. 
+Pro správu zařízení běží na serveru jednoduchá aplikace vytvořená pomocí nástroje Flask. 
+Je psána v jazyce Python a dovoluje základní ovládání zařízení – nastavení parametrů, 
+spuštění měření, export dat a jejich vizualizaci. Dále také obsahuje jednoduchou SQLite 
+databázi uživatelů a možnosti přihlášení/registrace. 
+Obr.  6 - Foto uživ. rozhraní (v grafu ref. VA charakteristika diody v režimu CC) 
+Aplikace umožňuje provádět 4 typy měření: 
+• V-A charakteristiky v režimu CC/CV 
+• Frekvenční a fázovou odezvu (Bodeho diagram) 
+• Skokovou odezvu 
+• Impulzní odezvu - 13 - 
+UŽIVATELSKÁ APLIKACE 
+Obr.  7 - Ovládací prvky jednotlivých typů měření 
+Ovládací prvky jsou ošetřeny proti zadání neplatných parametrů a takových, které již 
+zařízení nedokáže zpracovat. Omezení jsou: 
+• Výstupní napětí: 0-20V 
+• Výstupní proud: 0-3A 
+• Frekvenční rozsah 10Hz-10kHz 
+• Délka impulzu: min. 10𝜇𝑠17 
+Pro vizualizaci byla využita knihovna Plotly. Grafy jsou tak interaktivní a lze je také 
+exportovat přímo do formátu PNG 
+17 Omezení je dáno rychlostí přeběhu D/A převodníku a komunikace. Viz literatura (23), sekce 1 - 14 - 
+UŽIVATELSKÁ APLIKACE 
+Obr.  8 - Ilustrační export skokové odezvy 
+Důležité je zde podotknout, že aplikace není ve své finální fázi. Jedná se spíše o „MVP“ pro 
+demonstraci funkce. Např. u obrázku 8 (výše) by bylo praktické vyznačit časovou konstantu 
+obvodu, resp. bod nevětšího růstu, případně další měřitelné parametry. Dále je třeba 
+doopravit škálování apod. 
+Z technického hlediska aplikaci chybí správa týmů a registrovaných zařízení (a jejich 
+přiřazení jednotlivým uživatelům). Takové funkce by dovolily nasazení přímo na cvičeních 
+(např.: KET/FYE, KET/ELM, KET/ELTM a dalších) - 15 - 
+ZÁVĚR 
+Závěr 
+Cílem této práce bylo vyvinout zařízení pro podporu bezkontaktní výuky, primárně pro 
+potřeby kombinované formy studia. Ovšem výběr komponent dovolil minimalizaci zařízení 
+a bylo by zbytečně nákladné a nepraktické navrhovat a vyrábět např. stolní charakterograf, 
+pokud nelze skutečně využít velikost zařízení pro lepší komponenty s vyšším 
+rozlišením/rychlostí apod., ovládacími a zobrazovacími prvky apod. Vývoj by byl příliš 
+nákladný a zdlouhavý, nehledě na znalosti k tomu potřebné.  
+Ve zvoleném provedení ovšem vzniká něco lehce odlišného, avšak splňujícího základní 
+myšlenku projektu – malá laboratoř, dokonce kapesní velikosti. Připravená na měření do 
+několika minut. Jednoduše ovladatelná mobilním telefonem či tabletem odkudkoliv. 
+Dle mého názoru praktičnost zařízení a jeho přijatelná výrobní cena18 vyvažují horší 
+technické parametry (primárně vzorkovací rychlost, napěťové rozsahy apod.) v porovnání 
+např. i jen se základním digitálním osciloskopem. 
+Během přípravy této práce autor nepoužil jakékoliv nástroje AI k generování obsahu této 
+práce. AI byla využita pouze při psaní software pro samotné zařízení a webovou aplikaci, a 
+to v podobě programu GitHub Copilot (model Gemini 2.5 Pro). Po použití těchto nástrojů 
+autor pečlivě zkontroloval veškeré generované softwarové součásti a přebírá plnou 
+zodpovědnost za jejich výslednou podobu.
+ 18 V rámci vývoje byla objednána várka testovacích 5-ti ks zařízení v ceně pohybující se kolem 1tis. Kč/ks - 16 - 
+LITERATURA 
+Literatura 
+1. Alpha & Omega Semiconductor. AOD4185 P-Channel Enhancement Mode Field Effect 
+Transistor. Alpha & Omega Semiconductor. [Online] 2013. [Citace: 3. 5 2025.] 
+https://www.aosmd.com/res/datasheets/AOD4185.pdf. AOD4185. 
+2. —. AOD4186 N-Channel Enhancement Mode Field Effect Transistor. Alpha & Omega 
+Semiconductor. 
+[Online] 
+2017. 
+[Citace: 
+3. 
+5 
+2025.] 
+https://www.lcsc.com/datasheet/lcsc_datasheet_2410121957_Alpha---Omega-Semicon
+AOD4186_C111914.pdf. AOD4186. 
+3. Espressif Systems. ESP Hardware Design Guidelines - ESP32-S3. ESP Hardware Design 
+Guideline. 
+[Online] 
+Espressif 
+Systems, 
+2024. 
+https://docs.espressif.com/projects/esp-hardware-design
+guidelines/en/latest/esp32s3/index.html. 
+[Citace: 
+3. 
+5 
+2025.] 
+4. —. ESP-IDF Programming Guide - ESP32-S3. ESP-IDF Programming Guide. [Online] 
+Espressif Systems, 2024. [Citace: 3. 5 2025.] https://docs.espressif.com/projects/esp
+idf/en/v5.4.1/esp32s3/index.html. 
+5. Analog Devices, Inc. Filter Design Tool (Filter Wizard). Filter Design Tool. [Online] 
+Analog Devices, Inc., 2025. [Citace: 2. 4 2025.] https://tools.analog.com/en/filterwizard/. 
+6. —. AD8531/AD8532/AD8534 Low Cost, 250 mA Output, Single-Supply Amplifiers. 
+[Online] 2002. [Citace: 6. 4 2025.] https://www.analog.com/media/en/technical
+documentation/data-sheets/ad8531_8532_8534.pdf. 
+7. Diodes Inc. AP63203 - 3.8V TO 32V INPUT, 2A LOW IQ SYNCHRONOUS BUCK 
+WITH ENHANCED EMI REDUCTION. [Online] 2021. [Citace: 1. 2 2025.] 
+https://www.diodes.com/assets/Datasheets/AP63200-AP63201-AP63203-AP63205.pdf. 
+AP63200/AP63201/AP63203/AP63205. 
+8. Espressif Systems. ESP32-S3 Series Datasheet. [Online] 2023. [Citace: 17. 3 2025.] 
+https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf. 
+9. —. ESP32-S3 Technical Reference Manual. [Online] 2023. [Citace: 21. 4 2025.] 
+https://www.espressif.com/sites/default/files/documentation/esp32
+s3_technical_reference_manual_en.pdf. 
+10. Frisch, Herbert. Základy elektroniky a elektronických obvodů. Praha : SNTL - 
+Nakladatelství technické literatury, 1992. 04-502-87. - 17 - 
+LITERATURA 
+11. Kolombet, E., Jurkovič, K. a Zodl, J. Využitie analógových integrovaných obvodov. 
+Bratislava : Alfa, 1989. 80-05-00528-8. 
+12. Malý, Martin. Hradla, volty, jednočipy. Praha : Edice CZ.NIC, 2017. 978-80-88168
+23-2. 
+13. —. ESP32 prakticky. Praha : Edice CZ.NIC, 2024. 978-80-88168-79-9. 
+14. Rogers, Andrew a Averyt, Josh. AN1974 - Introduction to USB Power Delivery Over 
+the USB Type-C Cable. Microchip Technology Inc. místo neznámé : Microchip Technology 
+Inc., 2015. DS00001974A. 
+15. Rogers, Andrew. AN1953 - Introduction to USB Type-C. Microchip Technology Inc. 
+místo neznámé : Microchip Technology Inc., 2015. DS00001953A. 
+16. Microchip Technology Inc. AN699 - Anti-Aliasing, Analog Filters for Data Acquisition 
+Systems. 
+[Online] 
+2000. 
+[Citace: 
+3. 
+5 
+2025.] 
+https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ApplicationNo
+ tes/ApplicationNotes/00699b.pdf. DS00699B. 
+17. —. AN 16.9 - USB331x USB Transceiver Layout Guidelines. [Online] 2019. [Citace: 
+21. 
+4 
+2025.] 
+https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ApplicationNotes
+ /ApplicationNotes/AN16.9-Application-Note-DS00002947A.pdf. DS00002947A. 
+18. Burdette, William. AN 25.16 - USB Charging Port ESD Protection Tips for UCS100x. 
+[Online] 
+2016. 
+[Citace: 
+21. 
+4 
+2025.] 
+https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ApplicationNotes
+ /ApplicationNotes/20005230A.pdf. DS20005230A. 
+19. Rogers, Andrew. AN1914 - Basic USB Type-C Upstream Facing Port Implementation. 
+[Online] 
+2015. 
+[Citace: 
+22. 
+2 
+2021.] 
+https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ApplicationNotes
+ /ApplicationNotes/00001914B.pdf. DS00001914B. 
+20. Amatérské Rádio pro konstruktéry. Ing. Petřík, Josef. 2, místo neznámé : MAGNET
+PRESS, 1992, Sv. 2. 0139-7087. 
+21. Stanford University. SPICE ‘Quick’ Reference Sheet. [Online] 2001. [Citace: 3. 3 
+2025.] https://web.stanford.edu/class/ee133/handouts/general/spice_ref.pdf. EE133-Winter 
+2001. 
+Serial 
+22. Microchip Technology Inc. MCP3202 - 2.7V Dual Channel 12-Bit A/D Converter with 
+SPI 
+Interface. 
+[Online] 
+2011. 
+[Citace: 
+28. 
+4 
+2025.] - 18 - 
+LITERATURA 
+https://ww1.microchip.com/downloads/aemDocuments/documents/APID/ProductDocumen
+ ts/DataSheets/21034F.pdf. DS21034F. 
+23. —. MCP4822 - 12-Bit Dual Voltage Output Digital-to-Analog Converter with Internal 
+VREF and SPI Interface. [Online] 2015. [Citace: 28. 4 2025.] 
+https://ww1.microchip.com/downloads/en/DeviceDoc/20002249B.pdf. DS20002249B. 
+24. Texas Instruments Inc. LMx24, LMx24x, LMx24xx, LM2902, LM2902x, LM2902xx, 
+LM2902xxx Quadruple Operational Amplifiers. [Online] 2024. [Citace: 28. 4 2025.] 
+https://www.ti.com/lit/ds/symlink/lm324.pdf. SLOS066AD. 
+25. Texas Instruments. System-Level ESD Protection Guide. [Online] 2022. [Citace: 3. 5 
+2025.] https://www.ti.com/lit/sg/sszb130d/sszb130d.pdf. SSZB130D. 
+26. WCH (Jiangsu Qinheng Co., Ltd.). USB PD Multi Fast Charging Protocol Power 
+Receiving Chip CH224. [Online] 2025. [Citace: 3. 5 2025.] https://www.wch
+ic.com/downloads/file/302.html. CH224DS1. 
+27. Více autorů. USB hardware. Wikipedia, The Free Encyclopedia. [Online] 10. 5 2025. 
+[Citace: 10. 5 2025.] https://en.wikipedia.org/wiki/USB_hardware#USB_power_delivery. 
+28. Clark, Mel a Walters, Kent. MicroNote 121: Protecting Data I/O Parts with TVS 
+Arrays. 
+[Online] 
+2018. 
+[Citace: 
+28. 
+4 
+2025.] 
+https://ww1.microchip.com/downloads/aemDocuments/documents/HRDS/ApplicationNote
+ s/ApplicationNotes/MicroNote121.pdf. 
+29. Walters, Kent a Clark, Mel. MicroNote 103: What is a TVS? [Online] 2018. [Citace: 
+28. 
+4 
+2025.] 
+https://ww1.microchip.com/downloads/aemDocuments/documents/HRDS/ApplicationNote
+ s/ApplicationNotes/MicroNote103.pdf. 
+30. Oji, Obi. ESD and Surge Protection for USB Interfaces. [Online] 2024. [Citace: 3. 5 
+2025.] https://www.ti.com/lit/an/slvaf82b/slvaf82b.pdf. slvaf82b. 
+31. 
+McGaffin, 
+Adam. [Online] 9 2024. [Citace: 30. 4 2025.] 
+https://www.ti.com/lit/ta/ssztd49a/ssztd49a.pdf?ts=1746878821582. SSZTD49A. 
+32. 
+Flask 
+documentation. 
+[Online] 
+https://flask.palletsprojects.com/en/stable/. 
+Plotly.py. 
+[Citace: 
+33. SQLite. [Online] [Citace: 10. 5 2025.] https://www.sqlite.org/. 
+34. 
+GitHub.com. 
+https://github.com/plotly/plotly.py. 
+[Online] 
+Plotly. 
+[Citace: 
+10. 
+5 
+10. 
+2025.] 
+5 
+2025.] - 19 - 
+SEZNAM OBRÁZKŮ 
+ - 20 - 
+Seznam obrázků 
+Obr.  1 - Zjednodušené blokové schéma zařízení ............................................................. - 2 - 
+Obr.  2 - Zjednodušené blokové schéma s rozdělenou měřící částí ................................. - 4 - 
+Obr.  3 - Zjednodušené blokové schéma zařízení z pohledu MCU .................................. - 5 - 
+Obr.  4 - blokové schéma navrženého zařízení ................................................................. - 6 - 
+Obr.  5 - Vizualizace konceptu (spodní strana) ................................................................ - 7 - 
+Obr.  6 - Foto uživ. rozhraní (v grafu ref. VA charakteristika diody v režimu CC) ....... - 13 - 
+Obr.  7 - Ovládací prvky jednotlivých typů měření ........................................................ - 14 - 
+Obr.  8 - Ilustrační export skokové odezvy .................................................................... - 15 - 
+ 
+Veškeré obrázky jsou vlastní 
+Seznam tabulek 
+Tab. 1 - Přehled napájecích rozsahů USB PD .................................................................. - 3 - 
+ 
+Seznam příloh 
+I. Schéma zapojení celého zařízení 
+II. Výrobní soubory PCB (elektronicky) 
+III. Firmware zařízení (elektronicky) 
+IV. Řídící aplikace (elektronicky) 

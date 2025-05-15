@@ -1,0 +1,134 @@
+body {
+    font-family: sans-serif;
+    margin: 0;
+    display: flex;
+    height: 100vh;
+    background-color: #f4f4f4;
+}
+
+.sidebar {
+    width: 250px;
+    background-color: #333;
+    color: white;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar h2 {
+    margin-top: 0;
+    text-align: center;
+}
+
+.sidebar label {
+    margin-top: 10px;
+}
+
+.sidebar select, .sidebar input {
+    width: 100%;
+    padding: 8px;
+    margin-top: 5px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background-color: #444;
+    color: white;
+    box-sizing: border-box; /* Add this */
+}
+
+.sidebar button {
+    background-color: #007bff;
+    color: white;
+    padding: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 20px;
+    width: 100%;
+}
+
+.sidebar button:hover {
+    background-color: #0056b3;
+}
+
+.main-content {
+    flex-grow: 1;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.graph-container {
+    flex-grow: 1;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 10px;
+}
+
+.auth-container {
+    width: 300px;
+    margin: 100px auto;
+    padding: 20px;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+.auth-container h2 {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.auth-container input {
+    width: calc(100% - 22px);
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.auth-container button {
+    width: 100%;
+    padding: 10px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.auth-container button:hover {
+    background-color: #0056b3;
+}
+
+.flash-messages {
+    list-style: none;
+    padding: 0;
+}
+
+.flash-messages .danger {
+    background-color: #f8d7da;
+    color: #721c24;
+    padding: 10px;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.flash-messages .success {
+    background-color: #d4edda;
+    color: #155724;
+    padding: 10px;
+    border: 1px solid #c3e6cb;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+.flash-messages .info {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    padding: 10px;
+    border: 1px solid #bee5eb;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}

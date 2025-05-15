@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Measuring Device Frontend</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        .settings-group { display: none; } /* Initially hide all specific settings */
+        .settings-group.active { display: block; } /* Show active settings */
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Settings</h2>
+        <label for="measure_mode">Measure Mode:</label>
+        <select id="measure_mode" name="measure_mode">
+            <option value="va">VA Characteristics</option>
+            <option value="bode">Frequency/Phase Response (Bode)</option>
+            <option value="step">Step Response</option>
+            <option value="impulse">Impulse Response</option>
+        </select>
+
+        <!-- VA Characteristics Settings -->
+        <div id="settings_va" class="settings-group">
+            <h3>VA Settings</h3>
+            <label for="va_channel">Channel:</label>
+            <select id="va_channel" name="va_channel">
+                <option value="CH0">CH0 (CV Only)</option>
+                <option value="CH1">CH1 (CV Only)</option>
+                <option value="CH2">CH2 (CV/CC)</option>
+            </select>
+            <label for="va_mode_type">Mode (CH2 Only):</label>
+            <select id="va_mode_type" name="va_mode_type" disabled>
+                <option value="CV">CV (Constant Voltage)</option>
+                <option value="CC">CC (Constant Current)</option>
+            </select>
+            <div id="va_cv_settings">
+                <label for="va_start_voltage">Start Voltage (V):</label>
+                <input type="number" id="va_start_voltage" name="va_start_voltage" value="0" step="0.1">
+                <label for="va_end_voltage">End Voltage (V):</label>
+                <input type="number" id="va_end_voltage" name="va_end_voltage" value="5" step="0.1">
+                <label for="va_step_voltage">Step Voltage (V):</label>
+                <input type="number" id="va_step_voltage" name="va_step_voltage" value="0.1" step="0.01">
+            </div>
+            <div id="va_cc_settings" style="display: none;">
+                <label for="va_start_current">Start Current (A):</label>
+                <input type="number" id="va_start_current" name="va_start_current" value="0" step="0.01">
+                <label for="va_end_current">End Current (A):</label>
+                <input type="number" id="va_end_current" name="va_end_current" value="1" step="0.01">
+                <label for="va_step_current">Step Current (A):</label>
+                <input type="number" id="va_step_current" name="va_step_current" value="0.01" step="0.001">
+            </div>
+        </div>
+
+        <!-- Bode Plot Settings -->
+        <div id="settings_bode" class="settings-group">
+            <h3>Bode Plot Settings</h3>
+            <label for="bode_channel">Channel:</label>
+            <select id="bode_channel" name="bode_channel">
+                <option value="CH0">CH0</option>
+                <option value="CH1">CH1</option>
+                <option value="CH2">CH2</option>
+            </select>
+            <label for="bode_freq_from">Freq From (Hz):</label>
+            <input type="number" id="bode_freq_from" name="bode_freq_from" value="10" min="1">
+            <label for="bode_freq_to">Freq To (Hz):</label>
+            <input type="number" id="bode_freq_to" name="bode_freq_to" value="10000" max="10000">
+            <label for="bode_freq_steps">Freq Points/Decade:</label> <!-- Changed from step to points for better log scale -->
+            <input type="number" id="bode_freq_steps" name="bode_freq_steps" value="10" min="1">
+            <label for="bode_output_voltage">Output Voltage (V):</label>
+            <input type="number" id="bode_output_voltage" name="bode_output_voltage" value="1" min="0" max="20" step="0.1">
+        </div>
+
+        <!-- Step Response Settings -->
+        <div id="settings_step" class="settings-group">
+            <h3>Step Response Settings</h3>
+            <label for="step_channel">Channel:</label>
+            <select id="step_channel" name="step_channel">
+                <option value="CH0">CH0</option>
+                <option value="CH1">CH1</option>
+                <option value="CH2">CH2</option>
+            </select>
+            <label for="step_voltage">Voltage (V):</label>
+            <input type="number" id="step_voltage" name="step_voltage" value="5" min="0" max="20" step="0.1">
+            <label for="step_time">Measurement Time (s):</label>
+            <input type="number" id="step_time" name="step_time" value="1" min="0.001" step="0.001">
+        </div>
+
+        <!-- Impulse Response Settings -->
+        <div id="settings_impulse" class="settings-group">
+            <h3>Impulse Response Settings</h3>
+            <label for="impulse_voltage">Impulse Voltage (V):</label>
+            <input type="number" id="impulse_voltage" name="impulse_voltage" value="5" min="0" max="20" step="0.1">
+            <label for="impulse_duration">Impulse Duration (us):</label>
+            <input type="number" id="impulse_duration" name="impulse_duration" value="10" min="1">
+            <label for="impulse_time">Measurement Time (s):</label>
+            <input type="number" id="impulse_time" name="impulse_time" value="0.1" min="0.001" step="0.001">
+        </div>
+
+        <button id="measure_button">Measure</button>
+        <button id="export_csv_button" disabled>Export CSV</button>
+        <a href="{{ url_for('main.logout') }}" style="color: white; text-align: center; margin-top: 20px; display: block;">Logout</a>
+    </div>
+    <div class="main-content">
+        <div id="graph" class="graph-container"></div>
+    </div>
+
+    <script>
+        const measureButton = document.getElementById('measure_button');
+        const exportCsvButton = document.getElementById('export_csv_button');
+        const measureModeSelect = document.getElementById('measure_mode');
+        const graphDiv = document.getElementById('graph');
+        let currentChartData = null;
+
+        const vaChannelSelect = document.getElementById('va_channel');
+        const vaModeTypeSelect = document.getElementById('va_mode_type');
+        const vaCvSettingsDiv = document.getElementById('va_cv_settings');
+        const vaCcSettingsDiv = document.getElementById('va_cc_settings');
+
+        const allSettingsGroups = document.querySelectorAll('.settings-group');
+
+        function updateSettingsVisibility() {
+            const selectedMode = measureModeSelect.value;
+            allSettingsGroups.forEach(group => {
+                group.classList.remove('active');
+            });
+            const activeSettingsGroup = document.getElementById('settings_' + selectedMode);
+            if (activeSettingsGroup) {
+                activeSettingsGroup.classList.add('active');
+            }
+
+            // VA specific logic for CC/CV
+            if (selectedMode === 'va') {
+                const selectedChannel = vaChannelSelect.value;
+                if (selectedChannel === 'CH2') {
+                    vaModeTypeSelect.disabled = false;
+                    if (vaModeTypeSelect.value === 'CV') {
+                        vaCvSettingsDiv.style.display = 'block';
+                        vaCcSettingsDiv.style.display = 'none';
+                    } else { // CC
+                        vaCvSettingsDiv.style.display = 'none';
+                        vaCcSettingsDiv.style.display = 'block';
+                    }
+                } else { // CH0 or CH1
+                    vaModeTypeSelect.value = 'CV'; // Force CV
+                    vaModeTypeSelect.disabled = true;
+                    vaCvSettingsDiv.style.display = 'block';
+                    vaCcSettingsDiv.style.display = 'none';
+                }
+            }
+        }
+        
+        measureModeSelect.addEventListener('change', updateSettingsVisibility);
+        if(vaChannelSelect) vaChannelSelect.addEventListener('change', updateSettingsVisibility);
+        if(vaModeTypeSelect) vaModeTypeSelect.addEventListener('change', updateSettingsVisibility);
+
+        measureButton.addEventListener('click', async () => {
+            const mode = measureModeSelect.value;
+            const params = new URLSearchParams();
+            params.append('measure_mode', mode);
+
+            // Collect data from the active settings group
+            const activeSettingsGroup = document.querySelector('.settings-group.active');
+            if (activeSettingsGroup) {
+                const inputs = activeSettingsGroup.querySelectorAll('input, select');
+                inputs.forEach(input => {
+                    if (!input.disabled) { // only include enabled inputs
+                         params.append(input.name, input.value);
+                    }
+                });
+                 // Special handling for VA CH0/CH1 to ensure va_mode_type is CV
+                if (mode === 'va') {
+                    const channel = document.getElementById('va_channel').value;
+                    if (channel === 'CH0' || channel === 'CH1') {
+                        params.set('va_mode_type', 'CV'); // Ensure CV is sent
+                    }
+                }
+            }
+
+
+            const response = await fetch("{{ url_for('main.measure') }}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: params
+            });
+            const data = await response.json();
+            currentChartData = data; // Store data for export
+            plotData(data, mode);
+            exportCsvButton.disabled = !data || data.length === 0;
+        });
+
+        exportCsvButton.addEventListener('click', async () => {
+            if (!currentChartData || currentChartData.length === 0) {
+                alert("No data to export.");
+                return;
+            }
+            try {
+                const response = await fetch("{{ url_for('main.export_csv') }}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ data: currentChartData })
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'measurement_data.csv';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                } else {
+                    const error = await response.json();
+                    alert("Error exporting CSV: " + (error.error || "Unknown error"));
+                }
+            } catch (error) {
+                console.error("Export error:", error);
+                alert("Failed to export CSV.");
+            }
+        });
+
+        function plotData(data, mode) {
+            let plot = {};
+            let layout = {
+                margin: { t: 30, b: 50, l: 60, r: 30 },
+                xaxis: {},
+                yaxis: {},
+                yaxis2: {
+                    overlaying: 'y',
+                    side: 'right',
+                    showgrid: false,
+                },
+                title: mode.toUpperCase() + ' Measurement' // Generic title
+            };
+
+            if (!data || data.length === 0) {
+                Plotly.newPlot(graphDiv, [], layout); // Clear graph if no data
+                return;
+            }
+
+            if (mode === 'va') {
+                plot = {
+                    x: data.map(p => p.voltage),
+                    y: data.map(p => p.current),
+                    type: 'scatter',
+                    mode: 'lines+markers'
+                };
+                layout.xaxis.title = 'Voltage (V)';
+                layout.yaxis.title = 'Current (A)';
+                layout.title = 'VA Characteristics';
+            } else if (mode === 'bode') {
+                const trace1 = {
+                    x: data.map(p => p.frequency),
+                    y: data.map(p => p.gain),
+                    name: 'Gain (dB)',
+                    type: 'scatter',
+                    mode: 'lines+markers'
+                };
+                const trace2 = {
+                    x: data.map(p => p.frequency),
+                    y: data.map(p => p.phase),
+                    name: 'Phase (°)',
+                    yaxis: 'y2',
+                    type: 'scatter',
+                    mode: 'lines+markers'
+                };
+                plot = [trace1, trace2];
+                layout.xaxis.title = 'Frequency (Hz)';
+                layout.xaxis.type = 'log';
+                layout.yaxis.title = 'Gain (dB)';
+                layout.yaxis2.title = 'Phase (°)'; // Fixed typo: removed trailing backslash
+                layout.title = 'Bode Plot';
+            } else if (mode === 'step' || mode === 'impulse') {
+                plot = {
+                    x: data.map(p => p.time),
+                    y: data.map(p => p.response),
+                    type: 'scatter',
+                    mode: 'lines'
+                };
+                layout.xaxis.title = 'Time (s)';
+                layout.yaxis.title = 'Response (V)';
+                layout.title = mode === 'step' ? 'Step Response' : 'Impulse Response';
+            }
+            Plotly.newPlot(graphDiv, Array.isArray(plot) ? plot : [plot], layout);
+        }
+        // Initial setup
+        updateSettingsVisibility();
+    </script>
+</body>
+</html>
