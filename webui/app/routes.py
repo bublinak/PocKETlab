@@ -13,7 +13,9 @@ mock_data = {
     "va": [{"voltage": i * 0.1, "current": i * 0.05 + 0.1} for i in range(10)],
     "bode": [{"frequency": 10**i, "gain": 20 - i*5, "phase": -i*45} for i in range(1, 5)],
     "step": [{"time": i * 0.01, "response": 1 - 0.5**(i*0.1)} for i in range(100)],
-    "impulse": [{"time": i * 0.01, "response": (0.5**(i*0.05)) * ((i*0.1)**2)} for i in range(100)]
+    "impulse": [{"time": i * 0.01, "response": (0.5**(i*0.05)) * ((i*0.1)**2)} for i in range(100)],
+    "testbed": {"output_voltage": 0, "output_current": 0, "input_ch0": 0, "input_ch1": 0},
+    # "control_system": {} # Placeholder for control system data - Will be generated dynamically
 }
 
 @main_bp.route('/')
@@ -198,6 +200,120 @@ def generate_impulse_data(settings):
         data.append({"time": round(t, 5), "response": round(response, 3)})
     return data
 
+def generate_testbed_data(settings):
+    # Simulate setting voltage and current limit
+    # In a real scenario, this would interact with the device
+    target_voltage = float(settings.get('testbed_target_voltage', 0))
+    current_limit = float(settings.get('testbed_current_limit', 0.1))
+
+    # Simulate some readings
+    # These would come from actual device measurements
+    # For now, let's make them somewhat responsive to settings
+    actual_output_voltage = target_voltage * (np.random.rand() * 0.1 + 0.95) # Simulate slight variation
+    
+    # Simulate current based on a dummy load and limit
+    # Assume a 10 Ohm load for this simulation if nothing is connected
+    simulated_load_resistance = 10 # Ohms
+    potential_current = actual_output_voltage / simulated_load_resistance
+    actual_output_current = min(potential_current, current_limit)
+    
+    # If current is limited, voltage might drop (simplified)
+    if potential_current > current_limit:
+        actual_output_voltage = actual_output_current * simulated_load_resistance * 0.98 # Simulate voltage drop due to current limiting
+
+    input_ch0_voltage = np.random.rand() * 5 # Random voltage for CH0
+    input_ch1_voltage = np.random.rand() * 3.3 # Random voltage for CH1
+    
+    return {
+        "output_voltage": round(actual_output_voltage, 3),
+        "output_current": round(actual_output_current, 4),
+        "input_ch0": round(input_ch0_voltage, 3),
+        "input_ch1": round(input_ch1_voltage, 3)
+    }
+
+def generate_control_system_data(settings):
+    cs_mode = settings.get('cs_mode', 'controller')
+    controller_type = settings.get('cs_controller_type', 'pid') # Default to PID if controller mode
+    file_name = settings.get('cs_model_file_name') # Get the filename from the form
+
+    file_info_text = "No file specified."
+    expected_extension = ".mdl" if cs_mode == 'system' else ".ctl"
+    if file_name:
+        file_info_text = f"File: {file_name} (expected {expected_extension})"
+        if not file_name.lower().endswith(expected_extension):
+            file_info_text += f" - Warning: Incorrect file type for mode."
+
+
+    if cs_mode == 'controller':
+        if controller_type == 'pid':
+            kp = float(settings.get('cs_pid_kp', 1.0))
+            ki = float(settings.get('cs_pid_ki', 0.1))
+            kd = float(settings.get('cs_pid_kd', 0.01))
+
+            setpoint = 1.0
+            y_plant = 0.0  # Plant output
+            integral_error_val = 0.0
+            previous_error_val = 0.0
+            
+            dt = 0.05  # Time step
+            sim_duration = 10.0  # Simulate for 10 seconds
+            num_steps = int(sim_duration / dt)
+            
+            response_data = []
+
+            # Plant parameters (simple first-order system: y[k+1] = plant_a * y[k] + plant_b * u[k])
+            plant_a = 0.95 
+            plant_b = 0.05 
+
+            max_u = 5.0 # Max controller output
+            min_u = -5.0 # Min controller output
+            
+            # Max integral error (anti-windup), scaled by Ki to be somewhat reasonable
+            max_integral = 20.0 / (ki if ki != 0 else 1.0) 
+
+
+            for i in range(num_steps):
+                time = i * dt
+                
+                error_val = setpoint - y_plant
+                
+                integral_error_val += error_val * dt
+                integral_error_val = max(min(integral_error_val, max_integral), -max_integral) # Anti-windup
+                
+                derivative_error_val = (error_val - previous_error_val) / dt if i > 0 and dt > 0 else 0.0
+                
+                u_controller = kp * error_val + ki * integral_error_val + kd * derivative_error_val
+                u_controller = max(min(u_controller, max_u), min_u) # Saturate controller output
+                
+                y_plant = plant_a * y_plant + plant_b * u_controller # Update plant
+                
+                response_data.append({"time": round(time, 3), "response": round(y_plant, 4)})
+                previous_error_val = error_val
+            
+            return {
+                "type": "pid_response", 
+                "data": response_data, 
+                "params": {"kp": kp, "ki": ki, "kd": kd},
+                "file_info": file_info_text,
+                "status": "PID Controller simulation complete."
+            }
+        else: # Other controller types
+            return {
+                "type": "controller_status",
+                "status": f"Controller mode active ({controller_type}). Waiting for configuration.",
+                "file_info": file_info_text
+            }
+    
+    elif cs_mode == 'system':
+        return {
+            "type": "system_status",
+            "status": "Controlled system mode active. Waiting for model execution.",
+            "file_info": file_info_text
+        }
+    
+    return {"type": "unknown_cs_state", "status": "Unknown control system state."}
+
+
 @main_bp.route('/measure', methods=['POST'])
 @login_required
 def measure():
@@ -213,6 +329,10 @@ def measure():
         data = generate_step_data(settings)
     elif measure_mode == 'impulse':
         data = generate_impulse_data(settings)
+    elif measure_mode == 'testbed':
+        data = generate_testbed_data(settings) # This will be a dict, not a list
+    elif measure_mode == 'control_system':
+        data = generate_control_system_data(settings) # This will be a dict
     
     return jsonify(data)
 
@@ -230,11 +350,20 @@ def export_csv():
         return Response(status=204)
 
     # Write header
-    headers = list(data_to_export[0].keys())
-    cw.writerow(headers)
-    # Write data rows
-    for row in data_to_export:
-        cw.writerow([row[h] for h in headers])
+    # Adjust for testbed and control_system data which are not lists of dicts
+    if isinstance(data_to_export, list) and data_to_export:
+        headers = list(data_to_export[0].keys())
+        cw.writerow(headers)
+        # Write data rows
+        for row in data_to_export:
+            cw.writerow([row[h] for h in headers])
+    elif isinstance(data_to_export, dict): # For single dict data like testbed
+        headers = list(data_to_export.keys())
+        cw.writerow(headers)
+        cw.writerow([data_to_export[h] for h in headers])
+    else: # No data or unsupported format
+        return Response(status=204)
+
 
     output = si.getvalue()
     return Response(

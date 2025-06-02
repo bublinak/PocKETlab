@@ -20,6 +20,8 @@
             <option value="bode">Frequency/Phase Response (Bode)</option>
             <option value="step">Step Response</option>
             <option value="impulse">Impulse Response</option>
+            <option value="testbed">Testbed</option>
+            <option value="control_system">Control Systems Toolbox</option>
         </select>
 
         <!-- VA Characteristics Settings -->
@@ -99,6 +101,66 @@
             <input type="number" id="impulse_time" name="impulse_time" value="0.1" min="0.001" step="0.001">
         </div>
 
+        <!-- Testbed Settings -->
+        <div id="settings_testbed" class="settings-group">
+            <h3>Testbed Settings</h3>
+            <label for="testbed_target_voltage">Target Output Voltage (V):</label>
+            <input type="number" id="testbed_target_voltage" name="testbed_target_voltage" value="0" step="0.1" min="0" max="20">
+            <label for="testbed_current_limit">Current Limit (A):</label>
+            <input type="number" id="testbed_current_limit" name="testbed_current_limit" value="0.1" step="0.01" min="0" max="3">
+            
+            <h4>Live Readings:</h4>
+            <div>Output Voltage: <span id="tb_out_v">-</span> V</div>
+            <div>Output Current: <span id="tb_out_c">-</span> A</div>
+            <div>Input CH0: <span id="tb_in_ch0">-</span> V</div>
+            <div>Input CH1: <span id="tb_in_ch1">-</span> V</div>
+        </div>
+
+        <!-- Control Systems Toolbox Settings -->
+        <div id="settings_control_system" class="settings-group">
+            <h3>Control Systems Toolbox</h3>
+            <label for="cs_mode">Mode:</label>
+            <select id="cs_mode" name="cs_mode">
+                <option value="controller">Device as Controller</option>
+                <option value="system">Device as Controlled System</option>
+            </select>
+
+            <!-- File Upload - Common for both modes but label changes -->
+            <div>
+                <label for="cs_model_file_input" id="cs_file_upload_label">Upload Control Law File (.ctl):</label>
+                <input type="file" id="cs_model_file_input" name="cs_model_file_input">
+            </div>
+
+            <!-- Controller Specific Settings -->
+            <div id="cs_controller_sub_settings">
+                <label for="cs_controller_type">Controller Type:</label>
+                <select id="cs_controller_type" name="cs_controller_type">
+                    <option value="pid">PID Controller</option>
+                    <option value="other">Other (from .ctl file)</option>
+                </select>
+
+                <div id="cs_pid_settings">
+                    <h4>PID Parameters:</h4>
+                    <label for="cs_pid_kp">Kp:</label>
+                    <input type="number" id="cs_pid_kp" name="cs_pid_kp" value="1.0" step="0.01">
+                    <label for="cs_pid_ki">Ki:</label>
+                    <input type="number" id="cs_pid_ki" name="cs_pid_ki" value="0.1" step="0.01">
+                    <label for="cs_pid_kd">Kd:</label>
+                    <input type="number" id="cs_pid_kd" name="cs_pid_kd" value="0.01" step="0.001">
+                </div>
+            </div>
+
+            <!-- System Specific Settings (placeholder) -->
+            <div id="cs_system_sub_settings" style="display: none;">
+                <p>System model details from .mdl file will be processed here.</p>
+            </div>
+
+            <div id="cs_status_display">Status: <span id="cs_status_text">-</span><br>
+                                        File Info: <span id="cs_file_info_text">-</span>
+            </div>
+        </div>
+
+
         <button id="measure_button">Measure</button>
         <button id="export_csv_button" disabled>Export CSV</button>
         <a href="{{ url_for('main.logout') }}" style="color: white; text-align: center; margin-top: 20px; display: block;">Logout</a>
@@ -120,6 +182,20 @@
         const vaCcSettingsDiv = document.getElementById('va_cc_settings');
 
         const allSettingsGroups = document.querySelectorAll('.settings-group');
+
+        // Control System specific elements
+        const csModeSelect = document.getElementById('cs_mode');
+        const csControllerSettingsDiv = document.getElementById('cs_controller_settings');
+        const csSystemSettingsDiv = document.getElementById('cs_system_settings');
+
+        // New Control System Elements
+        const csControllerSubSettingsDiv = document.getElementById('cs_controller_sub_settings');
+        const csSystemSubSettingsDiv = document.getElementById('cs_system_sub_settings');
+        const csControllerTypeSelect = document.getElementById('cs_controller_type');
+        const csPidSettingsDiv = document.getElementById('cs_pid_settings');
+        const csFileUploadLabel = document.getElementById('cs_file_upload_label');
+        const csModelFileInput = document.getElementById('cs_model_file_input');
+
 
         function updateSettingsVisibility() {
             const selectedMode = measureModeSelect.value;
@@ -150,11 +226,34 @@
                     vaCcSettingsDiv.style.display = 'none';
                 }
             }
+            // Control System specific logic for sub-settings
+            if (selectedMode === 'control_system' && csModeSelect) {
+                if (csModeSelect.value === 'controller') {
+                    csControllerSubSettingsDiv.style.display = 'block';
+                    csSystemSubSettingsDiv.style.display = 'none';
+                    csFileUploadLabel.textContent = 'Upload Control Law File (.ctl):';
+                    csModelFileInput.accept = '.ctl';
+                    // Further logic for controller type (PID vs other)
+                    if (csControllerTypeSelect.value === 'pid') {
+                        csPidSettingsDiv.style.display = 'block';
+                    } else {
+                        csPidSettingsDiv.style.display = 'none';
+                    }
+                } else { // system
+                    csControllerSubSettingsDiv.style.display = 'none';
+                    csSystemSubSettingsDiv.style.display = 'block';
+                    csPidSettingsDiv.style.display = 'none'; // Ensure PID settings are hidden for system mode
+                    csFileUploadLabel.textContent = 'Upload System Model File (.mdl):';
+                    csModelFileInput.accept = '.mdl';
+                }
+            }
         }
         
         measureModeSelect.addEventListener('change', updateSettingsVisibility);
         if(vaChannelSelect) vaChannelSelect.addEventListener('change', updateSettingsVisibility);
         if(vaModeTypeSelect) vaModeTypeSelect.addEventListener('change', updateSettingsVisibility);
+        if(csModeSelect) csModeSelect.addEventListener('change', updateSettingsVisibility); // Listener for CS mode change
+        if(csControllerTypeSelect) csControllerTypeSelect.addEventListener('change', updateSettingsVisibility); // Listener for CS controller type change
 
         measureButton.addEventListener('click', async () => {
             const mode = measureModeSelect.value;
@@ -164,12 +263,22 @@
             // Collect data from the active settings group
             const activeSettingsGroup = document.querySelector('.settings-group.active');
             if (activeSettingsGroup) {
-                const inputs = activeSettingsGroup.querySelectorAll('input, select');
+                const inputs = activeSettingsGroup.querySelectorAll('input[type="number"], input[type="text"], select'); // query for specific input types
                 inputs.forEach(input => {
-                    if (!input.disabled) { // only include enabled inputs
+                    if (!input.disabled && input.name) { // only include enabled inputs with a name
                          params.append(input.name, input.value);
                     }
                 });
+                // Handle file input separately to get file name
+                const fileInput = activeSettingsGroup.querySelector('input[type="file"]');
+                if (fileInput && fileInput.files && fileInput.files.length > 0) {
+                    params.append(fileInput.name + '_name', fileInput.files[0].name);
+                    // Actual file upload would be handled here if not just sending name
+                    // For example, using FormData if the backend supports multipart/form-data
+                } else if (fileInput) {
+                    params.append(fileInput.name + '_name', ''); // Send empty if no file selected
+                }
+
                  // Special handling for VA CH0/CH1 to ensure va_mode_type is CV
                 if (mode === 'va') {
                     const channel = document.getElementById('va_channel').value;
@@ -190,7 +299,7 @@
             const data = await response.json();
             currentChartData = data; // Store data for export
             plotData(data, mode);
-            exportCsvButton.disabled = !data || data.length === 0;
+            exportCsvButton.disabled = !data || (Array.isArray(data) && data.length === 0) || (typeof data === 'object' && Object.keys(data).length === 0) ;
         });
 
         exportCsvButton.addEventListener('click', async () => {
@@ -238,9 +347,17 @@
                 },
                 title: mode.toUpperCase() + ' Measurement' // Generic title
             };
+            
+            // Clear previous plot and specific displays
+            Plotly.newPlot(graphDiv, [], layout); // Clear graph
+            document.getElementById('tb_out_v').textContent = '-';
+            document.getElementById('tb_out_c').textContent = '-';
+            document.getElementById('tb_in_ch0').textContent = '-';
+            document.getElementById('tb_in_ch1').textContent = '-';
+            document.getElementById('cs_status_text').textContent = '-';
+            document.getElementById('cs_file_info_text').textContent = '-';
 
-            if (!data || data.length === 0) {
-                Plotly.newPlot(graphDiv, [], layout); // Clear graph if no data
+            if (!data || ((Array.isArray(data) && data.length === 0)) || (typeof data === 'object' && !data.type && Object.keys(data).length === 0) ) { // Adjusted condition for CS data
                 return;
             }
 
@@ -286,8 +403,37 @@
                 layout.xaxis.title = 'Time (s)';
                 layout.yaxis.title = 'Response (V)';
                 layout.title = mode === 'step' ? 'Step Response' : 'Impulse Response';
+                Plotly.newPlot(graphDiv, [plot], layout);
+            } else if (mode === 'testbed') {
+                // For testbed, we update spans, not a graph primarily
+                document.getElementById('tb_out_v').textContent = data.output_voltage !== undefined ? data.output_voltage.toFixed(3) : '-';
+                document.getElementById('tb_out_c').textContent = data.output_current !== undefined ? data.output_current.toFixed(4) : '-';
+                document.getElementById('tb_in_ch0').textContent = data.input_ch0 !== undefined ? data.input_ch0.toFixed(3) : '-';
+                document.getElementById('tb_in_ch1').textContent = data.input_ch1 !== undefined ? data.input_ch1.toFixed(3) : '-';
+                layout.title = 'Testbed - Live Readings';
+                // Optionally, could plot one of these values over time if desired, but for now, just text.
+                Plotly.newPlot(graphDiv, [], layout); // Keep graph area clean or show a relevant message
+            } else if (mode === 'control_system') {
+                document.getElementById('cs_file_info_text').textContent = data.file_info || '-';
+                if (data.type === "pid_response" && data.data) {
+                    plot = {
+                        x: data.data.map(p => p.time),
+                        y: data.data.map(p => p.response),
+                        type: 'scatter',
+                        mode: 'lines'
+                    };
+                    layout.xaxis.title = 'Time (s)';
+                    layout.yaxis.title = 'System Response';
+                    let params_str = "PID Params: " + Object.entries(data.params || {}).map(([k,v]) => `${k}=${v}`).join(', ');
+                    document.getElementById('cs_status_text').textContent = (data.status || "") + " | " + params_str;
+                    layout.title = 'PID Controller Response';
+                    Plotly.newPlot(graphDiv, [plot], layout);
+                } else {
+                    document.getElementById('cs_status_text').textContent = data.status || '-';
+                    layout.title = 'Control Systems Toolbox - Status';
+                    Plotly.newPlot(graphDiv, [], layout); // Clear graph or show general status
+                }
             }
-            Plotly.newPlot(graphDiv, Array.isArray(plot) ? plot : [plot], layout);
         }
         // Initial setup
         updateSettingsVisibility();

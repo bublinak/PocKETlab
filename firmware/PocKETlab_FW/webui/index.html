@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PocKETlab - Network Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔬 PocKETlab</h1>
+            <h2>Network Manager</h2>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-button active" onclick="showTab('networks')">Networks</button>
+            <button class="tab-button" onclick="showTab('status')">Status</button>
+            <button class="tab-button" onclick="showTab('settings')">Settings</button>
+            <button class="tab-button" onclick="showTab('update')">Update</button>
+        </nav>
+
+        <!-- Networks Tab -->
+        <div id="networks" class="tab-content active">
+            <div class="card">
+                <h3>WiFi Networks</h3>
+                <button class="btn btn-primary" onclick="scanNetworks()">🔍 Scan Networks</button>
+                <div id="networkList"></div>
+            </div>
+
+            <div class="card">
+                <h3>Add Network Manually</h3>
+                <form id="addNetworkForm">
+                    <div class="form-group">
+                        <label for="ssid">SSID:</label>
+                        <input type="text" id="ssid" name="ssid" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" name="password">
+                    </div>
+                    <button type="submit" class="btn btn-success">➕ Add Network</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>Saved Networks</h3>
+                <div id="savedNetworks"></div>
+            </div>
+        </div>
+
+        <!-- Status Tab -->
+        <div id="status" class="tab-content">
+            <div class="card">
+                <h3>Connection Status</h3>
+                <div id="statusInfo"></div>
+            </div>
+        </div>        <!-- Settings Tab -->
+        <div id="settings" class="tab-content">
+            <div class="card">
+                <h3>Device Settings</h3>
+                <form id="settingsForm">
+                    <div class="form-group">
+                        <label for="deviceName">Device Name:</label>
+                        <input type="text" id="deviceName" name="deviceName" placeholder="Enter device name">
+                    </div>
+                    <div class="form-group">
+                        <label for="adminPassword">Admin Password:</label>
+                        <input type="password" id="adminPassword" name="adminPassword" placeholder="Enter new admin password (optional)">
+                    </div>
+                    <div class="form-group">
+                        <label for="hostname">mDNS Hostname:</label>
+                        <input type="text" id="hostname" name="hostname" placeholder="e.g., pocketlab (without .local)">
+                        <small class="help-text">Device will be accessible as hostname.local</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>Network Management</h3>
+                <div class="network-mgmt-section">
+                    <button class="btn btn-info" onclick="exportNetworks()">📥 Export Network Settings</button>
+                    <button class="btn btn-warning" onclick="clearAllNetworks()">🗑️ Clear All Networks</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>System Actions</h3>
+                <div class="system-actions">
+                    <button class="btn btn-warning" onclick="rebootDevice()">🔄 Reboot Device</button>
+                    <button class="btn btn-danger" onclick="factoryReset()">⚠️ Factory Reset</button>
+                </div>
+                <div class="help-text">
+                    <p><strong>Factory Reset:</strong> This will erase all settings, saved networks, and restore default configuration.</p>
+                </div>
+            </div>
+        </div><!-- Update Tab -->
+        <div id="update" class="tab-content">
+            <div class="card">
+                <h3>Firmware Update</h3>
+                <form id="otaForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="otaFile">Select Firmware File (.bin):</label>
+                        <input type="file" id="otaFile" name="update" accept=".bin" required>
+                    </div>
+                    <div class="progress-container" id="firmwareProgress" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="firmwareProgressFill"></div>
+                        </div>
+                        <div class="progress-text" id="firmwareProgressText">0%</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">📤 Upload Firmware</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>Web Interface Update</h3>
+                <form id="webuiForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="webuiFile">Select Web UI Package (.zip):</label>
+                        <input type="file" id="webuiFile" name="webui" accept=".zip" required>
+                    </div>
+                    <div class="progress-container" id="webuiProgress" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="webuiProgressFill"></div>
+                        </div>
+                        <div class="progress-text" id="webuiProgressText">0%</div>
+                    </div>
+                    <button type="submit" class="btn btn-success">🌐 Upload Web Interface</button>
+                </form>
+                <div class="help-text">
+                    <p><strong>Note:</strong> Upload a ZIP file containing the web interface files (index.html, app.js, style.css, etc.)</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Device Information</h3>
+                <div id="deviceInfo"></div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>PocKETlab Network Manager v1.0</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

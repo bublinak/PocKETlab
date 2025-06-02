@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PocKETlab - Initial Setup</title>
+    <style>
+        :root {
+            --primary-color: #2196F3;
+            --primary-dark: #1976D2;
+            --success-color: #4CAF50;
+            --warning-color: #FF9800;
+            --danger-color: #F44336;
+            --background-color: #f5f5f5;
+            --card-background: #ffffff;
+            --text-color: #333333;
+            --border-color: #e0e0e0;
+            --shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .card {
+            background: var(--card-background);
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        h2 {
+            color: #666;
+            margin-bottom: 30px;
+            font-weight: normal;
+        }
+
+        .status {
+            background: #fff3cd;
+            border: 1px solid var(--warning-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            color: #856404;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--text-color);
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .btn-warning {
+            background-color: var(--warning-color);
+            color: white;
+        }
+
+        .divider {
+            margin: 30px 0;
+            text-align: center;
+            position: relative;
+        }
+
+        .divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: var(--border-color);
+        }
+
+        .divider span {
+            background: var(--card-background);
+            padding: 0 20px;
+            color: #666;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background-color: #f8f9fa;
+        }
+
+        .upload-area.dragover {
+            border-color: var(--primary-color);
+            background-color: #e3f2fd;
+        }
+
+        .progress {
+            width: 100%;
+            height: 8px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-color), var(--success-color));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            border-color: var(--success-color);
+            color: #155724;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            border-color: var(--danger-color);
+            color: #721c24;
+        }
+
+        .alert-warning {
+            background-color: #fff3cd;
+            border-color: var(--warning-color);
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="logo">🔬</div>
+            <h1>PocKETlab</h1>
+            <h2>Initial Setup</h2>
+            
+            <div class="status">
+                <strong>⚠️ Setup Required</strong><br>
+                No networks configured or web interface found. Please configure your device using one of the options below.
+            </div>
+
+            <!-- Network Configuration Form -->
+            <form id="networkForm">
+                <h3 style="margin-bottom: 20px; color: var(--primary-color);">📶 Configure WiFi Network</h3>
+                
+                <div class="form-group">
+                    <label for="ssid">Network Name (SSID):</label>
+                    <input type="text" id="ssid" name="ssid" required placeholder="Enter WiFi network name">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Password:</label>
+                    <input type="password" id="password" name="password" placeholder="Enter WiFi password (leave empty for open networks)">
+                </div>
+                
+                <button type="submit" class="btn btn-primary">🔗 Connect to Network</button>
+                <button type="button" class="btn btn-warning" onclick="scanNetworks()">🔍 Scan Networks</button>
+            </form>
+
+            <div id="scanResults" style="display: none; margin-top: 20px;">
+                <h4>Available Networks:</h4>
+                <div id="networkList"></div>
+            </div>
+
+            <div class="divider">
+                <span>OR</span>
+            </div>
+
+            <!-- Web UI Upload -->
+            <div>
+                <h3 style="margin-bottom: 20px; color: var(--primary-color);">📁 Upload Web Interface</h3>
+                <p style="margin-bottom: 20px; color: #666;">
+                    Upload a ZIP file containing the web interface files (HTML, CSS, JS) to enable the full management interface.
+                </p>
+                
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="upload-area" id="uploadArea">
+                        <div style="font-size: 2em; margin-bottom: 10px;">📤</div>
+                        <p>Drag and drop a ZIP file here, or click to select</p>
+                        <input type="file" id="zipFile" name="webui" accept=".zip" style="display: none;">
+                        <div class="progress" id="progress" style="display: none;">
+                            <div class="progress-bar" id="progressBar"></div>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-success">📦 Upload Web Interface</button>
+                </form>
+            </div>
+
+            <div class="divider">
+                <span>Device Actions</span>
+            </div>
+
+            <button type="button" class="btn btn-warning" onclick="reboot()">🔄 Reboot Device</button>
+        </div>
+    </div>
+
+    <script>
+        // Setup drag and drop
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('zipFile');
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+            }
+        });
+
+        // Network form submission
+        document.getElementById('networkForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const ssid = document.getElementById('ssid').value;
+            const password = document.getElementById('password').value;
+            
+            fetch('/api/configure', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ssid, password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('Network configured successfully! Device will restart...', 'success');
+                    setTimeout(() => window.location.reload(), 3000);
+                } else {
+                    showAlert('Failed to configure network: ' + data.message, 'danger');
+                }
+            })
+            .catch(error => {
+                showAlert('Error configuring network', 'danger');
+            });
+        });
+
+        // Upload form submission
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const fileInput = document.getElementById('zipFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showAlert('Please select a ZIP file', 'warning');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('webui', file);
+            
+            const progress = document.getElementById('progress');
+            const progressBar = document.getElementById('progressBar');
+            
+            progress.style.display = 'block';
+            
+            fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    progressBar.style.width = '100%';
+                    showAlert('Web interface uploaded successfully! Device will restart...', 'success');
+                    setTimeout(() => window.location.reload(), 3000);
+                } else {
+                    showAlert('Failed to upload web interface: ' + data.message, 'danger');
+                }
+            })
+            .catch(error => {
+                showAlert('Error uploading web interface', 'danger');
+            })
+            .finally(() => {
+                progress.style.display = 'none';
+                progressBar.style.width = '0%';
+            });
+        });
+
+        // Scan networks
+        function scanNetworks() {
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '🔍 Scanning...';
+            button.disabled = true;
+
+            fetch('/api/scan')
+                .then(response => response.json())
+                .then(data => {
+                    displayNetworks(data.networks || []);
+                })
+                .catch(error => {
+                    showAlert('Failed to scan networks', 'danger');
+                })
+                .finally(() => {
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                });
+        }
+
+        // Display scanned networks
+        function displayNetworks(networks) {
+            const scanResults = document.getElementById('scanResults');
+            const networkList = document.getElementById('networkList');
+            
+            if (networks.length === 0) {
+                networkList.innerHTML = '<p>No networks found.</p>';
+            } else {
+                let html = '';
+                networks.forEach(network => {
+                    const isSecure = network.encryption !== 'none';
+                    html += `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 5px;">
+                            <div>
+                                <strong>${isSecure ? '🔒' : '📶'} ${network.ssid}</strong><br>
+                                <small>Signal: ${getSignalStrength(network.rssi)} | ${network.encryption}</small>
+                            </div>
+                            <button class="btn btn-primary" onclick="selectNetwork('${network.ssid}', ${isSecure})">Select</button>
+                        </div>
+                    `;
+                });
+                networkList.innerHTML = html;
+            }
+            
+            scanResults.style.display = 'block';
+        }
+
+        // Select a network from scan results
+        function selectNetwork(ssid, requiresPassword) {
+            document.getElementById('ssid').value = ssid;
+            if (!requiresPassword) {
+                document.getElementById('password').value = '';
+            }
+            document.getElementById('scanResults').style.display = 'none';
+        }
+
+        // Get signal strength indicator
+        function getSignalStrength(rssi) {
+            if (rssi > -50) return 'Excellent';
+            if (rssi > -60) return 'Good';
+            if (rssi > -70) return 'Fair';
+            return 'Weak';
+        }
+
+        // Reboot device
+        function reboot() {
+            if (confirm('Are you sure you want to reboot the device?')) {
+                fetch('/api/reboot', { method: 'POST' })
+                    .then(() => {
+                        showAlert('Device is rebooting...', 'warning');
+                        setTimeout(() => window.location.reload(), 10000);
+                    })
+                    .catch(error => {
+                        showAlert('Failed to reboot device', 'danger');
+                    });
+            }
+        }
+
+        // Show alert message
+        function showAlert(message, type) {
+            // Remove existing alerts
+            document.querySelectorAll('.alert').forEach(alert => alert.remove());
+            
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            
+            const card = document.querySelector('.card');
+            card.insertBefore(alert, card.firstChild);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                alert.remove();
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
