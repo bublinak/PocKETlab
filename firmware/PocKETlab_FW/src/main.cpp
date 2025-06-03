@@ -4,6 +4,7 @@
 #include "pin_definitions.h"
 #include "pd_control.h"
 #include "netman.h"
+#include "pocketlab_io.h"
 
 // LED Configuration
 #define LED_PIN 38
@@ -22,6 +23,9 @@ PDControl pdControl(FIVE_V_ONLY); // Using 5V only mode as emergency fallback
 
 // Network Manager instance
 NetMan netManager("PocKETlab", "admin123");
+
+// PocKETlab I/O system instance
+PocKETlabIO pocketlabIO;
 
 void fadeIn() {
   for (int i = 0; i <= BRIGHTNESS; i++) {
@@ -50,9 +54,18 @@ void fadeOut() {
   leds.show();
 }
 
-void setup() {
-  delay(1000); // Wait for USB CDC to initialize
+void setup() {  delay(1000); // Wait for USB CDC to initialize
   Serial.begin(115200);
+  
+  // Initialize PocKETlab I/O system
+  Serial.println("Initializing PocKETlab I/O...");
+  if (!pocketlabIO.begin()) {
+    Serial.println("ERROR: Failed to initialize PocKETlab I/O system!");
+    Serial.println("Some features may not work properly.");
+  } else {
+    Serial.println("PocKETlab I/O system initialized successfully");
+  }
+  
   // Initialize PD Control
   Serial.println("Initializing PD Control...");
   pdControl.begin();
@@ -85,7 +98,6 @@ void setup() {
   Serial.println("Fan test done.");
   Serial.println("Fading out LEDs...");
   fadeOut();
-
   // Test PD voltage settings
   Serial.println("Testing PD voltage settings...");
   float testVoltages[] = {9.0, 12.0, 15.0, 20.0, 5.0};
@@ -96,7 +108,41 @@ void setup() {
     pdControl.setPDVoltage(testVoltages[i]);
     delay(1000);
     Serial.print("Current voltage: ");
-    Serial.print(pdControl.readPDVoltage());    Serial.println("V");
+    Serial.print(pdControl.readPDVoltage());    
+    Serial.println("V");
+  }
+  
+  // Test PocKETlab I/O functionality
+  if (pocketlabIO.isInitialized()) {
+    Serial.println("Testing PocKETlab I/O functionality...");
+    
+    // Test power control
+    Serial.println("Setting power output to 5V, 1A limit...");
+    pocketlabIO.setPowerVoltage(5.0);
+    pocketlabIO.setPowerCurrent(1.0);
+      // Test signal generation with amplifier compensation
+    Serial.println("Generating test signals (values are FINAL OUTPUT after 6.7x amplifier):");
+    Serial.println("Setting Channel A to 6.7V, Channel B to 13.4V...");
+    pocketlabIO.setSignalVoltage(SIGNAL_CHANNEL_A, 1.5);   // 6.7V final output (1V DAC)
+    pocketlabIO.setSignalVoltage(SIGNAL_CHANNEL_B, 2.1);  // 13.4V final output (2V DAC)
+    
+    // Update all DACs simultaneously
+    pocketlabIO.updateAllDACs();
+    
+    delay(500);  // Allow settling time
+    
+    // Read back and verify values
+    Serial.println("Verification of amplifier compensation:");
+    Serial.printf("Channel A - DAC: %.3fV, Expected Output: %.2fV\n", 
+                  pocketlabIO.readSignalFeedback(SIGNAL_CHANNEL_A),
+                  pocketlabIO.getExpectedSignalOutput(SIGNAL_CHANNEL_A));
+    Serial.printf("Channel B - DAC: %.3fV, Expected Output: %.2fV\n", 
+                  pocketlabIO.readSignalFeedback(SIGNAL_CHANNEL_B),
+                  pocketlabIO.getExpectedSignalOutput(SIGNAL_CHANNEL_B));
+    
+    // Read back initial values
+    Serial.println("\nComplete I/O readings:");
+    pocketlabIO.printStatus();
   }
 
   // Don't disconnect WiFi since netManager handles it
@@ -124,6 +170,20 @@ void loop() {
       if (netManager.isConfigPortalActive()) {
         Serial.println("AP Mode: " + netManager.getIPAddress());
       }
+    }
+      // Add I/O system status to periodic report
+    if (pocketlabIO.isInitialized()) {
+      Serial.println("--- I/O Status ---");
+      Serial.printf("Power: %.2fV, %.3fA\n", 
+                    pocketlabIO.readPowerVoltage(), 
+                    pocketlabIO.readPowerCurrent());
+      Serial.printf("Signal Inputs: A=%.3fV, B=%.3fV\n", 
+                    pocketlabIO.readSignalVoltage(SIGNAL_CHANNEL_A),
+                    pocketlabIO.readSignalVoltage(SIGNAL_CHANNEL_B));
+      Serial.printf("Signal Outputs: A=%.2fV, B=%.2fV (amplified)\n", 
+                    pocketlabIO.getExpectedSignalOutput(SIGNAL_CHANNEL_A),
+                    pocketlabIO.getExpectedSignalOutput(SIGNAL_CHANNEL_B));
+      Serial.printf("Temperature: %.1f°C\n", pocketlabIO.readTemperature());
     }
     Serial.println("==================");
   }

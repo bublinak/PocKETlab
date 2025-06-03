@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, Response, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, Response, current_app, session
 from flask_login import login_user, logout_user, login_required, current_user
 from app import db
 from app.models import User
@@ -7,16 +7,6 @@ from io import StringIO
 import numpy as np # For linspace and logspace
 
 main_bp = Blueprint('main', __name__)
-
-# Dummy data for demonstration
-mock_data = {
-    "va": [{"voltage": i * 0.1, "current": i * 0.05 + 0.1} for i in range(10)],
-    "bode": [{"frequency": 10**i, "gain": 20 - i*5, "phase": -i*45} for i in range(1, 5)],
-    "step": [{"time": i * 0.01, "response": 1 - 0.5**(i*0.1)} for i in range(100)],
-    "impulse": [{"time": i * 0.01, "response": (0.5**(i*0.05)) * ((i*0.1)**2)} for i in range(100)],
-    "testbed": {"output_voltage": 0, "output_current": 0, "input_ch0": 0, "input_ch1": 0},
-    # "control_system": {} # Placeholder for control system data - Will be generated dynamically
-}
 
 @main_bp.route('/')
 @login_required

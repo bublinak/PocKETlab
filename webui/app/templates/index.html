@@ -359,9 +359,7 @@
 
             if (!data || ((Array.isArray(data) && data.length === 0)) || (typeof data === 'object' && !data.type && Object.keys(data).length === 0) ) { // Adjusted condition for CS data
                 return;
-            }
-
-            if (mode === 'va') {
+            }            if (mode === 'va') {
                 plot = {
                     x: data.map(p => p.voltage),
                     y: data.map(p => p.current),
@@ -371,6 +369,7 @@
                 layout.xaxis.title = 'Voltage (V)';
                 layout.yaxis.title = 'Current (A)';
                 layout.title = 'VA Characteristics';
+                Plotly.newPlot(graphDiv, [plot], layout);
             } else if (mode === 'bode') {
                 const trace1 = {
                     x: data.map(p => p.frequency),
@@ -391,8 +390,9 @@
                 layout.xaxis.title = 'Frequency (Hz)';
                 layout.xaxis.type = 'log';
                 layout.yaxis.title = 'Gain (dB)';
-                layout.yaxis2.title = 'Phase (°)'; // Fixed typo: removed trailing backslash
+                layout.yaxis2.title = 'Phase (°)';
                 layout.title = 'Bode Plot';
+                Plotly.newPlot(graphDiv, plot, layout);
             } else if (mode === 'step' || mode === 'impulse') {
                 plot = {
                     x: data.map(p => p.time),
