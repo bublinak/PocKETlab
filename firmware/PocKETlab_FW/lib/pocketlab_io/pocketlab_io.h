@@ -23,6 +23,9 @@
 #define ADC_DIVIDER_LOSS 1.6663
 #define ADC_INPUT_LOSS 6.8 * ADC_DIVIDER_LOSS  // Input voltage divider gain
 
+// Power amplifier configuration
+#define POWER_AMPLIFIER_GAIN 6.6f    // Op-amp gain on power outputs
+
 // Channel definitions for signal ADC/DAC
 enum SignalChannel {
     SIGNAL_CHANNEL_A = 0,
@@ -42,9 +45,9 @@ public:
     // Initialization
     bool begin();
     void end();
-    
-    // === Power Control Functions ===
-    // Set power voltage (0-20V range)
+      // === Power Control Functions ===
+    // Set power voltage - voltage is FINAL OUTPUT after 6.7x amplifier
+    // Range: 0 to ~13.7V (limited by 2.048V DAC * 6.7x gain)
     bool setPowerVoltage(float voltage);
     
     // Set power current limit (0-3A range)  
@@ -54,6 +57,9 @@ public:
     float readPowerVoltage();    // From FB_VOUT (GPIO5)
     float readPowerCurrent();    // From FB_IOUT (GPIO4)
     float readGroundVoltage();   // From FB_GOUT (GPIO3)
+    
+    // Get expected amplified power output voltage based on current DAC setting
+    float getExpectedPowerOutput();
       // === Signal Control Functions ===
     // Set signal DAC outputs - voltage is FINAL OUTPUT after 6.7x amplifier
     // Range: 0 to ~13.7V (limited by 2.048V DAC * 6.7x gain)
@@ -85,8 +91,7 @@ public:
     void setADCReference(float voltage);
     void setDACReference(float voltage);    // Get current ranges and references
     float getADCReference() const { return _adcRefVoltage; }
-    float getDACReference() const { return _dacRefVoltage; }
-    float getPowerVoltageRange() const { return POWER_VOLTAGE_MAX; }
+    float getDACReference() const { return _dacRefVoltage; }    float getPowerVoltageRange() const { return DAC_REFERENCE_VOLTAGE * POWER_AMPLIFIER_GAIN; }
     float getPowerCurrentRange() const { return POWER_CURRENT_MAX; }
     float getSignalVoltageRange() const { return DAC_REFERENCE_VOLTAGE * SIGNAL_AMPLIFIER_GAIN; }
     float getSignalInputRange() const { return ADC_REFERENCE_VOLTAGE * ADC_INPUT_LOSS; }

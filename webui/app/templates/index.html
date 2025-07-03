@@ -14,6 +14,11 @@
 <body>
     <div class="sidebar">
         <h2>Settings</h2>
+        <label for="target_board">Target Board:</label>
+        <select id="target_board" name="target_board">
+            <!-- Options will be populated dynamically -->
+        </select>
+
         <label for="measure_mode">Measure Mode:</label>
         <select id="measure_mode" name="measure_mode">
             <option value="va">VA Characteristics</option>
@@ -195,7 +200,35 @@
         const csPidSettingsDiv = document.getElementById('cs_pid_settings');
         const csFileUploadLabel = document.getElementById('cs_file_upload_label');
         const csModelFileInput = document.getElementById('cs_model_file_input');
+        const targetBoardSelect = document.getElementById('target_board');
 
+
+        async function fetchReadyBoards() {
+            try {
+                const response = await fetch("{{ url_for('main.get_boards') }}");
+                const boards = await response.json();
+                
+                // Clear existing options
+                targetBoardSelect.innerHTML = '';
+
+                if (boards.length > 0) {
+                    boards.forEach(board => {
+                        const option = document.createElement('option');
+                        option.value = board;
+                        option.textContent = board;
+                        targetBoardSelect.appendChild(option);
+                    });
+                } else {
+                    const option = document.createElement('option');
+                    option.value = "";
+                    option.textContent = "No ready boards found";
+                    option.disabled = true;
+                    targetBoardSelect.appendChild(option);
+                }
+            } catch (error) {
+                console.error("Error fetching boards:", error);
+            }
+        }
 
         function updateSettingsVisibility() {
             const selectedMode = measureModeSelect.value;
@@ -259,6 +292,9 @@
             const mode = measureModeSelect.value;
             const params = new URLSearchParams();
             params.append('measure_mode', mode);
+
+            const targetBoard = document.getElementById('target_board').value;
+            params.append('target_board', targetBoard);
 
             // Collect data from the active settings group
             const activeSettingsGroup = document.querySelector('.settings-group.active');
@@ -437,6 +473,8 @@
         }
         // Initial setup
         updateSettingsVisibility();
+        fetchReadyBoards(); // Fetch boards on page load
+        setInterval(fetchReadyBoards, 5000); // Refresh board list every 5 seconds
     </script>
 </body>
 </html>

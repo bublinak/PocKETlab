@@ -16,7 +16,7 @@ All notable changes to the PocKETlab firmware project are documented in this fil
 - **New PocKETlab I/O Library**
   - Hardware abstraction for MCP3202 ADC and MCP4822 DACs
   - Power control (0-20V voltage, 0-3A current limiting)
-  - Dual-channel signal generation (0-2.048V range)
+  - Dual-channel signal generation (0-13.7V range with automatic gain compensation)
   - Temperature monitoring via NTC probe
   - Synchronized DAC updates using LDAC
   - Comprehensive error handling and safety features

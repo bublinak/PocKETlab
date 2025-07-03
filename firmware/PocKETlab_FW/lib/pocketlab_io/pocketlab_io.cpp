@@ -97,15 +97,21 @@ bool PocKETlabIO::setPowerVoltage(float voltage) {
         return false;
     }
     
-    if (!_validateVoltageRange(voltage, POWER_VOLTAGE_MIN, POWER_VOLTAGE_MAX)) {
-        Serial.printf("ERROR: Power voltage %.3fV out of range (%.1f-%.1fV)\n", 
-                     voltage, POWER_VOLTAGE_MIN, POWER_VOLTAGE_MAX);
+    // Calculate maximum output voltage considering amplifier gain
+    float maxOutputVoltage = _dacRefVoltage * POWER_AMPLIFIER_GAIN;
+    
+    if (!_validateVoltageRange(voltage, POWER_VOLTAGE_MIN, maxOutputVoltage)) {
+        Serial.printf("ERROR: Power voltage %.3fV out of range (%.1f-%.3fV)\n", 
+                     voltage, POWER_VOLTAGE_MIN, maxOutputVoltage);
         return false;
     }
     
+    // Compensate for amplifier gain: DAC voltage = desired output / gain
+    float dacVoltage = voltage / POWER_AMPLIFIER_GAIN;
+    
     // Convert voltage to DAC value
-    uint16_t dacValue = _voltageToRaw(voltage, _dacRefVoltage, DAC_MAX_VALUE);
-      // Use channel A of power DAC for voltage control
+    uint16_t dacValue = _voltageToRaw(dacVoltage, _dacRefVoltage, DAC_MAX_VALUE);
+    // Use channel A of power DAC for voltage control
     return _powerDAC->write(dacValue, 0);
 }
 
@@ -129,15 +135,15 @@ bool PocKETlabIO::setPowerCurrent(float current) {
 }
 
 float PocKETlabIO::readPowerVoltage() {
-    return _readAnalogPin(PIN_FB_VOUT);
+    return _readAnalogPin(PIN_FB_VOUT) * POWER_AMPLIFIER_GAIN; // Compensate for amplifier gain
 }
 
 float PocKETlabIO::readPowerCurrent() {
-    return _readAnalogPin(PIN_FB_IOUT);
+    return _readAnalogPin(PIN_FB_IOUT) * POWER_AMPLIFIER_GAIN; // Compensate for amplifier gain
 }
 
 float PocKETlabIO::readGroundVoltage() {
-    return _readAnalogPin(PIN_FB_GOUT);
+    return _readAnalogPin(PIN_FB_GOUT) * POWER_AMPLIFIER_GAIN; // Compensate for amplifier gain
 }
 
 // === Signal Control Functions ===
@@ -193,6 +199,12 @@ float PocKETlabIO::getExpectedSignalOutput(SignalChannel channel) {
     // Read the DAC feedback voltage and multiply by amplifier gain
     float dacVoltage = readSignalFeedback(channel);
     return dacVoltage * SIGNAL_AMPLIFIER_GAIN;
+}
+
+float PocKETlabIO::getExpectedPowerOutput() {
+    // Read the power DAC feedback voltage and multiply by amplifier gain
+    float dacVoltage = readPowerVoltage();
+    return dacVoltage * POWER_AMPLIFIER_GAIN;
 }
 
 // === Advanced Control ===
@@ -264,20 +276,25 @@ void PocKETlabIO::printStatus() {
         Serial.println("PocKETlab I/O: Not initialized");
         return;
     }
-    
     Serial.println("=== PocKETlab I/O Status ===");
     Serial.printf("ADC Reference: %.3fV\n", _adcRefVoltage);
     Serial.printf("DAC Reference: %.3fV\n", _dacRefVoltage);
-    Serial.printf("Power Voltage Range: %.1f-%.1fV\n", POWER_VOLTAGE_MIN, POWER_VOLTAGE_MAX);
+    Serial.printf("Power Output Range: 0.0-%.1fV (after %.1fx amplifier)\n", 
+                  getPowerVoltageRange(), POWER_AMPLIFIER_GAIN);
     Serial.printf("Power Current Range: %.1f-%.1fA\n", POWER_CURRENT_MIN, POWER_CURRENT_MAX);
-    Serial.printf("Signal Output Range: 0.0-%.1fV (after %.1fx amplifier)\n", 
+    Serial.printf("Signal Output Range: 0.0-%.1fV (after %.1fx amplifier)\n",
                   getSignalVoltageRange(), SIGNAL_AMPLIFIER_GAIN);
     Serial.printf("Signal Input Range: 0.0-%.1fV (with %.3fx input loss)\n", 
                   getSignalInputRange(), ADC_INPUT_LOSS);
     Serial.printf("Signal DAC Range: 0.0-%.3fV (before amplifier)\n", _dacRefVoltage);
+      Serial.println("\n--- Current Readings ---");
     
-    Serial.println("\n--- Current Readings ---");
-    Serial.printf("Power Voltage: %.3fV\n", readPowerVoltage());
+    // Show both power DAC feedback and expected amplified output
+    float powerFeedback = readPowerVoltage();
+    float expectedPowerOutput = getExpectedPowerOutput();
+    Serial.printf("Power: DAC: %.3fV (before amp), Expected Output: %.2fV (after amp)\n", 
+                  powerFeedback, expectedPowerOutput);
+    
     Serial.printf("Power Current: %.3fA\n", readPowerCurrent());
     Serial.printf("Ground Voltage: %.3fV\n", readGroundVoltage());
     

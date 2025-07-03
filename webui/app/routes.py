@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, Response, current_app, session
 from flask_login import login_user, logout_user, login_required, current_user
-from app import db
+from app import db, mqtt_client
 from app.models import User
 import csv
 from io import StringIO
@@ -61,6 +61,14 @@ def register():
         return redirect(url_for('main.login'))
     return render_template('register.html')
 
+
+@main_bp.route('/get_boards')
+@login_required
+def get_boards():
+    if not current_app.config.get('MOCK_ON'):
+        boards = mqtt_client.get_ready_boards()
+        return jsonify(boards)
+    return jsonify([]) # Return empty list in mock mode
 
 def generate_va_data(settings):
     channel = settings.get('va_channel')
@@ -307,24 +315,44 @@ def generate_control_system_data(settings):
 @main_bp.route('/measure', methods=['POST'])
 @login_required
 def measure():
-    measure_mode = request.form.get('measure_mode')
-    settings = request.form # Get all form data
+    if current_app.config.get('MOCK_ON'):
+        measure_mode = request.form.get('measure_mode')
+        settings = request.form
+        data = []
+        if measure_mode == 'va':
+            data = generate_va_data(settings)
+        elif measure_mode == 'bode':
+            data = generate_bode_data(settings)
+        elif measure_mode == 'step':
+            data = generate_step_data(settings)
+        elif measure_mode == 'impulse':
+            data = generate_impulse_data(settings)
+        elif measure_mode == 'testbed':
+            data = generate_testbed_data(settings)
+        elif measure_mode == 'control_system':
+            data = generate_control_system_data(settings)
+        return jsonify(data)
+    else:
+        try:
+            measure_mode = request.form.get('measure_mode')
+            settings = {k: v for k, v in request.form.items() if k != 'measure_mode' and k != 'target_board'}
+            target_board = request.form.get('target_board', 'default')
 
-    data = []
-    if measure_mode == 'va':
-        data = generate_va_data(settings)
-    elif measure_mode == 'bode':
-        data = generate_bode_data(settings)
-    elif measure_mode == 'step':
-        data = generate_step_data(settings)
-    elif measure_mode == 'impulse':
-        data = generate_impulse_data(settings)
-    elif measure_mode == 'testbed':
-        data = generate_testbed_data(settings) # This will be a dict, not a list
-    elif measure_mode == 'control_system':
-        data = generate_control_system_data(settings) # This will be a dict
-    
-    return jsonify(data)
+            message_id = mqtt_client.publish_command(measure_mode, settings, target_board)
+            
+            # Wait for the response from the board
+            response_data = mqtt_client.get_data(message_id, timeout=15)
+
+            if response_data:
+                return jsonify(response_data.get('payload', {}).get('data', []))
+            else:
+                return jsonify({"error": "Request timed out. No response from device."}), 504
+
+        except ConnectionError as e:
+            return jsonify({"error": str(e)}), 503
+        except Exception as e:
+            return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+
 
 @main_bp.route('/export_csv', methods=['POST'])
 @login_required
