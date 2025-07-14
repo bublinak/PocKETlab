@@ -130,12 +130,6 @@
                 <option value="system">Device as Controlled System</option>
             </select>
 
-            <!-- File Upload - Common for both modes but label changes -->
-            <div>
-                <label for="cs_model_file_input" id="cs_file_upload_label">Upload Control Law File (.ctl):</label>
-                <input type="file" id="cs_model_file_input" name="cs_model_file_input">
-            </div>
-
             <!-- Controller Specific Settings -->
             <div id="cs_controller_sub_settings">
                 <label for="cs_controller_type">Controller Type:</label>
@@ -153,15 +147,28 @@
                     <label for="cs_pid_kd">Kd:</label>
                     <input type="number" id="cs_pid_kd" name="cs_pid_kd" value="0.01" step="0.001">
                 </div>
+
+                <!-- File Upload for Controller .ctl files -->
+                <div id="cs_controller_file_upload_section" style="display: none;">
+                    <h4>Controller File Upload:</h4>
+                    <label for="cs_model_file_input">Upload Control Law File (.ctl):</label>
+                    <input type="file" id="cs_model_file_input" name="cs_model_file_input" accept=".ctl">
+                    <button type="button" id="cs_upload_button">Upload Model</button>
+                </div>
             </div>
 
-            <!-- System Specific Settings (placeholder) -->
+            <!-- System Specific Settings -->
             <div id="cs_system_sub_settings" style="display: none;">
-                <p>System model details from .mdl file will be processed here.</p>
+                <h4>System Model Upload:</h4>
+                <label for="cs_system_file_input">Upload System Model File (.mdl):</label>
+                <input type="file" id="cs_system_file_input" name="cs_system_file_input" accept=".mdl">
+                <button type="button" id="cs_system_upload_button">Upload Model</button>
             </div>
 
-            <div id="cs_status_display">Status: <span id="cs_status_text">-</span><br>
-                                        File Info: <span id="cs_file_info_text">-</span>
+            <!-- Status Display -->
+            <div id="cs_status_display">
+                <div>Status: <span id="cs_status_text">No model uploaded</span></div>
+                <div>Model Name: <span id="cs_model_name_text">-</span></div>
             </div>
         </div>
 
@@ -180,6 +187,16 @@
         const measureModeSelect = document.getElementById('measure_mode');
         const graphDiv = document.getElementById('graph');
         let currentChartData = null;
+        let isContinuousRunning = false; // Track state for continuous modes
+        let continuousDataInterval = null; // Interval for polling continuous data
+        let continuousDataBuffer = {
+            timestamps: [],
+            inputs: [],
+            states_x1: [],
+            states_x2: [],
+            outputs_y1: [],
+            outputs_y2: []
+        };
 
         const vaChannelSelect = document.getElementById('va_channel');
         const vaModeTypeSelect = document.getElementById('va_mode_type');
@@ -200,8 +217,334 @@
         const csPidSettingsDiv = document.getElementById('cs_pid_settings');
         const csFileUploadLabel = document.getElementById('cs_file_upload_label');
         const csModelFileInput = document.getElementById('cs_model_file_input');
+        const csSystemFileInput = document.getElementById('cs_system_file_input');
+        const csUploadButton = document.getElementById('cs_upload_button');
+        const csSystemUploadButton = document.getElementById('cs_system_upload_button');
+        const csFileUploadSection = document.getElementById('cs_file_upload_section');
+        const csControllerFileUploadSection = document.getElementById('cs_controller_file_upload_section');
+        const csStatusDisplay = document.getElementById('cs_status_display');
         const targetBoardSelect = document.getElementById('target_board');
 
+        let uploadedModelData = null; // Store uploaded model data
+
+        function updateMeasureButtonText() {
+            const selectedMode = measureModeSelect.value;
+            const csModeValue = csModeSelect ? csModeSelect.value : null;
+            
+            if (isContinuousRunning) {
+                // Button shows "Stop" for all modes when running
+                if (selectedMode === 'testbed') {
+                    measureButton.textContent = 'Stop Testbed';
+                } else if (selectedMode === 'control_system') {
+                    if (csModeValue === 'controller') {
+                        measureButton.textContent = 'Stop Controller';
+                    } else {
+                        measureButton.textContent = 'Stop System';
+                    }
+                } else if (selectedMode === 'va') {
+                    measureButton.textContent = 'Stop VA';
+                } else if (selectedMode === 'bode') {
+                    measureButton.textContent = 'Stop Bode';
+                } else if (selectedMode === 'step') {
+                    measureButton.textContent = 'Stop Step';
+                } else if (selectedMode === 'impulse') {
+                    measureButton.textContent = 'Stop Impulse';
+                } else {
+                    measureButton.textContent = 'Stop';
+                }
+            } else {
+                // Button shows "Start" for continuous modes, "Measure" for others
+                if (selectedMode === 'testbed') {
+                    measureButton.textContent = 'Start Testbed';
+                } else if (selectedMode === 'control_system') {
+                    if (csModeValue === 'controller') {
+                        measureButton.textContent = 'Start Controller';
+                    } else {
+                        measureButton.textContent = 'Start System';
+                    }
+                } else if (['va', 'bode', 'step', 'impulse'].includes(selectedMode)) {
+                    measureButton.textContent = 'Start ' + selectedMode.toUpperCase();
+                } else {
+                    measureButton.textContent = 'Measure';
+                }
+            }
+        }
+
+        function startContinuousDataPolling(boardId, mode) {
+            console.log(`[DEBUG] Starting continuous data polling for board: ${boardId}, mode: ${mode}`);
+            
+            // Clear any existing interval
+            if (continuousDataInterval) {
+                clearInterval(continuousDataInterval);
+            }
+
+            // Clear data buffer for control system mode
+            if (mode === 'control_system') {
+                continuousDataBuffer = {
+                    timestamps: [],
+                    inputs: [],
+                    states_x1: [],
+                    states_x2: [],
+                    outputs_y1: [],
+                    outputs_y2: []
+                };
+            }
+
+            // Poll for new data every 200ms for continuous modes, 1000ms for measurement modes
+            const pollInterval = (mode === 'control_system' || mode === 'testbed') ? 200 : 1000;
+            
+            continuousDataInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`{{ url_for('main.get_continuous_data') }}?board_id=${boardId}&mode=${mode}`);
+                    const data = await response.json();
+                    
+                    if (mode === 'control_system') {
+                        // Handle control system data (array of data packets)
+                        if (data && data.length > 0) {
+                            data.forEach(dataPacket => {
+                                if (dataPacket.type === 'data' && dataPacket.mode === 'control_system') {
+                                    const payload = dataPacket.payload;
+                                    console.log(`[DEBUG] Processing control system data packet with ${payload.sample_count} samples`);
+                                    
+                                    // Add new data to buffer
+                                    continuousDataBuffer.timestamps.push(...payload.timestamps);
+                                    continuousDataBuffer.inputs.push(...payload.inputs);
+                                    continuousDataBuffer.states_x1.push(...payload.states_x1);
+                                    continuousDataBuffer.states_x2.push(...payload.states_x2);
+                                    continuousDataBuffer.outputs_y1.push(...payload.outputs_y1);
+                                    continuousDataBuffer.outputs_y2.push(...payload.outputs_y2);
+                                    
+                                    // Keep only the last 1000 points for performance
+                                    const maxPoints = 1000;
+                                    if (continuousDataBuffer.timestamps.length > maxPoints) {
+                                        const excess = continuousDataBuffer.timestamps.length - maxPoints;
+                                        continuousDataBuffer.timestamps = continuousDataBuffer.timestamps.slice(excess);
+                                        continuousDataBuffer.inputs = continuousDataBuffer.inputs.slice(excess);
+                                        continuousDataBuffer.states_x1 = continuousDataBuffer.states_x1.slice(excess);
+                                        continuousDataBuffer.states_x2 = continuousDataBuffer.states_x2.slice(excess);
+                                        continuousDataBuffer.outputs_y1 = continuousDataBuffer.outputs_y1.slice(excess);
+                                        continuousDataBuffer.outputs_y2 = continuousDataBuffer.outputs_y2.slice(excess);
+                                    }
+                                    
+                                    // Update the graph
+                                    updateContinuousGraph();
+                                }
+                            });
+                        }
+                    } else if (mode === 'testbed') {
+                        // Handle testbed data (single object with readings)
+                        if (data && data.mode === 'testbed' && data.readings) {
+                            console.log(`[DEBUG] Processing testbed data`);
+                            // Update testbed displays
+                            document.getElementById('tb_out_v').textContent = data.readings.output_voltage !== undefined ? data.readings.output_voltage.toFixed(3) : '-';
+                            document.getElementById('tb_out_c').textContent = data.readings.output_current !== undefined ? data.readings.output_current.toFixed(4) : '-';
+                            document.getElementById('tb_in_ch0').textContent = data.readings.input_ch0 !== undefined ? data.readings.input_ch0.toFixed(3) : '-';
+                            document.getElementById('tb_in_ch1').textContent = data.readings.input_ch1 !== undefined ? data.readings.input_ch1.toFixed(3) : '-';
+                        }
+                    } else if (mode === 'va') {
+                        // Handle VA measurement data (accumulated data points)
+                        if (data && data.mode === 'va' && data.data && data.data.length > 0) {
+                            console.log(`[DEBUG] Processing VA data: ${data.data.length} points, ${data.progress}% complete`);
+                            // Update the VA plot
+                            const plot = {
+                                x: data.data.map(p => p.voltage),
+                                y: data.data.map(p => p.current),
+                                type: 'scatter',
+                                mode: 'lines+markers'
+                            };
+                            const layout = {
+                                margin: { t: 30, b: 50, l: 60, r: 30 },
+                                xaxis: { title: 'Voltage (V)' },
+                                yaxis: { title: 'Current (A)' },
+                                title: `VA Characteristics - ${data.progress.toFixed(1)}% Complete`
+                            };
+                            Plotly.newPlot(graphDiv, [plot], layout);
+                            
+                            // Stop polling if measurement is complete
+                            if (data.completed) {
+                                console.log('[DEBUG] VA measurement completed');
+                                stopContinuousDataPolling();
+                                isContinuousRunning = false;
+                                updateMeasureButtonText();
+                                layout.title = 'VA Characteristics - Complete';
+                                Plotly.newPlot(graphDiv, [plot], layout);
+                            }
+                        }
+                    } else if (['bode', 'step', 'impulse'].includes(mode)) {
+                        // Handle other measurement modes similarly to VA
+                        if (data && data.mode === mode && data.data && data.data.length > 0) {
+                            console.log(`[DEBUG] Processing ${mode} data: ${data.data.length} points, ${data.progress}% complete`);
+                            
+                            let plot, layout;
+                            if (mode === 'bode') {
+                                const trace1 = {
+                                    x: data.data.map(p => p.frequency),
+                                    y: data.data.map(p => p.gain),
+                                    name: 'Gain (dB)',
+                                    type: 'scatter',
+                                    mode: 'lines+markers'
+                                };
+                                const trace2 = {
+                                    x: data.data.map(p => p.frequency),
+                                    y: data.data.map(p => p.phase),
+                                    name: 'Phase (°)',
+                                    yaxis: 'y2',
+                                    type: 'scatter',
+                                    mode: 'lines+markers'
+                                };
+                                plot = [trace1, trace2];
+                                layout = {
+                                    margin: { t: 30, b: 50, l: 60, r: 30 },
+                                    xaxis: { title: 'Frequency (Hz)', type: 'log' },
+                                    yaxis: { title: 'Gain (dB)' },
+                                    yaxis2: { title: 'Phase (°)', overlaying: 'y', side: 'right', showgrid: false },
+                                    title: `Bode Plot - ${data.progress.toFixed(1)}% Complete`
+                                };
+                            } else {
+                                plot = {
+                                    x: data.data.map(p => p.time),
+                                    y: data.data.map(p => p.response),
+                                    type: 'scatter',
+                                    mode: 'lines'
+                                };
+                                layout = {
+                                    margin: { t: 30, b: 50, l: 60, r: 30 },
+                                    xaxis: { title: 'Time (s)' },
+                                    yaxis: { title: 'Response (V)' },
+                                    title: `${mode.charAt(0).toUpperCase() + mode.slice(1)} Response - ${data.progress.toFixed(1)}% Complete`
+                                };
+                            }
+                            
+                            Plotly.newPlot(graphDiv, plot, layout);
+                            
+                            // Stop polling if measurement is complete
+                            if (data.completed) {
+                                console.log(`[DEBUG] ${mode} measurement completed`);
+                                stopContinuousDataPolling();
+                                isContinuousRunning = false;
+                                updateMeasureButtonText();
+                                layout.title = layout.title.replace(/- \d+.*% Complete/, '- Complete');
+                                Plotly.newPlot(graphDiv, plot, layout);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[DEBUG] Error polling continuous data for ${mode}:`, error);
+                }
+            }, pollInterval);
+        }
+
+        function stopContinuousDataPolling() {
+            console.log('[DEBUG] Stopping continuous data polling');
+            if (continuousDataInterval) {
+                clearInterval(continuousDataInterval);
+                continuousDataInterval = null;
+            }
+        }
+
+        function updateContinuousGraph() {
+            if (continuousDataBuffer.timestamps.length === 0) return;
+
+            // Convert timestamps to relative time in seconds
+            const firstTimestamp = continuousDataBuffer.timestamps[0];
+            const timeSeconds = continuousDataBuffer.timestamps.map(t => (t - firstTimestamp) / 1000.0);
+
+            const traces = [
+                {
+                    x: timeSeconds,
+                    y: continuousDataBuffer.inputs,
+                    name: getInputName(1),
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: 'blue' }
+                },
+                {
+                    x: timeSeconds,
+                    y: continuousDataBuffer.states_x1,
+                    name: 'State X1',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: 'red' }
+                },
+                {
+                    x: timeSeconds,
+                    y: continuousDataBuffer.states_x2,
+                    name: 'State X2',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: 'green' }
+                },
+                {
+                    x: timeSeconds,
+                    y: continuousDataBuffer.outputs_y1,
+                    name: getOutputName(1),
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: 'orange', dash: 'dot' }
+                },
+                {
+                    x: timeSeconds,
+                    y: continuousDataBuffer.outputs_y2,
+                    name: getOutputName(2),
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: 'purple', dash: 'dot' }
+                }
+            ];
+
+            const layout = {
+                margin: { t: 30, b: 50, l: 60, r: 30 },
+                xaxis: { title: 'Time (s)' },
+                yaxis: { title: 'Value' },
+                title: 'Control System - Real-time Data',
+                showlegend: true,
+                legend: { x: 0, y: 1 }
+            };
+
+            Plotly.newPlot(graphDiv, traces, layout);
+        }
+
+        function startMeasurementDataPolling(boardId, mode) {
+            console.log(`[DEBUG] Starting measurement data polling for board: ${boardId}, mode: ${mode}`);
+            
+            // Clear any existing interval
+            if (continuousDataInterval) {
+                clearInterval(continuousDataInterval);
+            }
+
+            // Poll for measurement data every 500ms for non-continuous modes
+            continuousDataInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`{{ url_for('main.get_measurement_data') }}?board_id=${boardId}&mode=${mode}`);
+                    const data = await response.json();
+                    
+                    if (data && data.data && data.data.length > 0) {
+                        console.log(`[DEBUG] Received ${mode} measurement data: ${data.data.length} points, ${data.progress}% complete`);
+                        
+                        // Plot the accumulated data
+                        plotData([data], mode);
+                        
+                        // Check if measurement is complete
+                        if (data.completed) {
+                            console.log(`[DEBUG] ${mode} measurement completed`);
+                            isContinuousRunning = false;
+                            updateMeasureButtonText();
+                            stopMeasurementDataPolling();
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error polling ${mode} data:`, error);
+                }
+            }, 500);
+        }
+
+        function stopMeasurementDataPolling() {
+            console.log('[DEBUG] Stopping measurement data polling');
+            if (continuousDataInterval) {
+                clearInterval(continuousDataInterval);
+                continuousDataInterval = null;
+            }
+        }
 
         async function fetchReadyBoards() {
             try {
@@ -232,6 +575,13 @@
 
         function updateSettingsVisibility() {
             const selectedMode = measureModeSelect.value;
+            
+            // Stop continuous polling when mode changes
+            if (isContinuousRunning && continuousDataInterval) {
+                stopContinuousDataPolling();
+                isContinuousRunning = false;
+            }
+            
             allSettingsGroups.forEach(group => {
                 group.classList.remove('active');
             });
@@ -264,22 +614,35 @@
                 if (csModeSelect.value === 'controller') {
                     csControllerSubSettingsDiv.style.display = 'block';
                     csSystemSubSettingsDiv.style.display = 'none';
-                    csFileUploadLabel.textContent = 'Upload Control Law File (.ctl):';
-                    csModelFileInput.accept = '.ctl';
-                    // Further logic for controller type (PID vs other)
+                    csStatusDisplay.style.display = 'block';
+                    
+                    // Show/hide based on controller type
                     if (csControllerTypeSelect.value === 'pid') {
                         csPidSettingsDiv.style.display = 'block';
+                        csControllerFileUploadSection.style.display = 'none';
+                        // Reset status for PID mode
+                        document.getElementById('cs_status_text').textContent = 'Using PID parameters';
+                        document.getElementById('cs_model_name_text').textContent = 'PID Controller';
                     } else {
                         csPidSettingsDiv.style.display = 'none';
+                        csControllerFileUploadSection.style.display = 'block';
+                        // Reset status for file mode
+                        document.getElementById('cs_status_text').textContent = 'No model uploaded';
+                        document.getElementById('cs_model_name_text').textContent = '-';
                     }
                 } else { // system
                     csControllerSubSettingsDiv.style.display = 'none';
                     csSystemSubSettingsDiv.style.display = 'block';
-                    csPidSettingsDiv.style.display = 'none'; // Ensure PID settings are hidden for system mode
-                    csFileUploadLabel.textContent = 'Upload System Model File (.mdl):';
-                    csModelFileInput.accept = '.mdl';
+                    csPidSettingsDiv.style.display = 'none';
+                    csStatusDisplay.style.display = 'block';
+                    // Reset status for system mode
+                    document.getElementById('cs_status_text').textContent = 'No model uploaded';
+                    document.getElementById('cs_model_name_text').textContent = '-';
                 }
             }
+            
+            // Update measure button text based on selected mode
+            updateMeasureButtonText();
         }
         
         measureModeSelect.addEventListener('change', updateSettingsVisibility);
@@ -288,13 +651,163 @@
         if(csModeSelect) csModeSelect.addEventListener('change', updateSettingsVisibility); // Listener for CS mode change
         if(csControllerTypeSelect) csControllerTypeSelect.addEventListener('change', updateSettingsVisibility); // Listener for CS controller type change
 
+        // Upload button functionality for controller files
+        if(csUploadButton) {
+            csUploadButton.addEventListener('click', async () => {
+                const fileInput = document.getElementById('cs_model_file_input');
+                if (!fileInput.files || fileInput.files.length === 0) {
+                    document.getElementById('cs_status_text').textContent = 'No file selected';
+                    document.getElementById('cs_model_name_text').textContent = '-';
+                    return;
+                }
+
+                const file = fileInput.files[0];
+                console.log(`[DEBUG] Uploading controller file: ${file.name}, size: ${file.size}, type: ${file.type}`);
+
+                if (!file.name.endsWith('.ctl')) {
+                    document.getElementById('cs_status_text').textContent = 'Wrong file type. Expected .ctl';
+                    document.getElementById('cs_model_name_text').textContent = '-';
+                    return;
+                }
+
+                try {
+                    const text = await file.text();
+                    const modelData = JSON.parse(text);
+                    
+                    console.log(`[DEBUG] Controller file parsed successfully:`, modelData);
+                    
+                    uploadedModelData = modelData;
+                    document.getElementById('cs_status_text').textContent = 'Controller uploaded successfully';
+                    document.getElementById('cs_model_name_text').textContent = modelData.controller_name || file.name;
+                    
+                } catch (error) {
+                    console.error(`[DEBUG] Controller file parsing error:`, error);
+                    document.getElementById('cs_status_text').textContent = 'Invalid file format';
+                    document.getElementById('cs_model_name_text').textContent = '-';
+                    uploadedModelData = null;
+                }
+            });
+        }
+
+        // Upload button functionality for system files
+        if(csSystemUploadButton) {
+            csSystemUploadButton.addEventListener('click', async () => {
+                const fileInput = document.getElementById('cs_system_file_input');
+                if (!fileInput.files || fileInput.files.length === 0) {
+                    document.getElementById('cs_status_text').textContent = 'No file selected';
+                    document.getElementById('cs_model_name_text').textContent = '-';
+                    return;
+                }
+
+                const file = fileInput.files[0];
+                console.log(`[DEBUG] Uploading system file: ${file.name}, size: ${file.size}, type: ${file.type}`);
+
+                if (!file.name.endsWith('.mdl')) {
+                    document.getElementById('cs_status_text').textContent = 'Wrong file type. Expected .mdl';
+                    document.getElementById('cs_model_name_text').textContent = '-';
+                    return;
+                }
+
+                try {
+                    const text = await file.text();
+                    const modelData = JSON.parse(text);
+                    
+                    console.log(`[DEBUG] System file parsed successfully:`, modelData);
+                    
+                    uploadedModelData = modelData;
+                    document.getElementById('cs_status_text').textContent = 'Model uploaded successfully';
+                    document.getElementById('cs_model_name_text').textContent = modelData.system_name || file.name;
+                    
+                } catch (error) {
+                    console.error(`[DEBUG] System file parsing error:`, error);
+                    document.getElementById('cs_status_text').textContent = 'Invalid file format';
+                    document.getElementById('cs_model_name_text').textContent = '-';
+                    uploadedModelData = null;
+                }
+            });
+        }
+
+        function getOutputName(outputIndex) {
+            // Get output name from uploaded model data, fallback to default names
+            if (uploadedModelData && uploadedModelData.output_mapping && uploadedModelData.output_mapping.length >= outputIndex) {
+                const outputMapping = uploadedModelData.output_mapping[outputIndex - 1];
+                return outputMapping?.output_name || `Output Y${outputIndex}`;
+            }
+            return `Output Y${outputIndex}`;
+        }
+
+        function getInputName(inputIndex) {
+            // Get input name from uploaded model data, fallback to default names
+            if (uploadedModelData && uploadedModelData.input_mapping && uploadedModelData.input_mapping.length >= inputIndex) {
+                const inputMapping = uploadedModelData.input_mapping[inputIndex - 1];
+                return inputMapping?.input_name || `Input ${inputIndex}`;
+            }
+            return `Input ${inputIndex}`;
+        }
+
         measureButton.addEventListener('click', async () => {
             const mode = measureModeSelect.value;
-            const params = new URLSearchParams();
-            params.append('measure_mode', mode);
-
             const targetBoard = document.getElementById('target_board').value;
-            params.append('target_board', targetBoard);
+            
+            // Check if this is a continuous mode and if it's currently running
+            const isContinuousMode = (mode === 'testbed' || mode === 'control_system');
+            
+            if (isContinuousMode && isContinuousRunning) {
+                // Stop the continuous mode
+                try {
+                    const stopFormData = new FormData();
+                    stopFormData.append('measure_mode', mode);
+                    stopFormData.append('target_board', targetBoard);
+                    
+                    const response = await fetch("{{ url_for('main.stop') }}", {
+                        method: 'POST',
+                        body: stopFormData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        isContinuousRunning = false;
+                        updateMeasureButtonText();
+                        
+                        // Clear any continuous data displays
+                        if (mode === 'testbed') {
+                            document.getElementById('tb_out_v').textContent = '-';
+                            document.getElementById('tb_out_c').textContent = '-';
+                            document.getElementById('tb_in_ch0').textContent = '-';
+                            document.getElementById('tb_in_ch1').textContent = '-';
+                        } else if (mode === 'control_system') {
+                            // Stop continuous data polling
+                            stopContinuousDataPolling();
+                            
+                            // Update status to show stopped
+                            const currentStatus = document.getElementById('cs_status_text').textContent;
+                            if (!currentStatus.includes('uploaded')) {
+                                document.getElementById('cs_status_text').textContent = 'Stopped';
+                            }
+                        }
+                        
+                        // Clear the graph
+                        Plotly.newPlot(graphDiv, [], {
+                            margin: { t: 30, b: 50, l: 60, r: 30 },
+                            title: `${mode.toUpperCase()} - Stopped`
+                        });
+                        
+                        console.log('Stopped:', data.message);
+                    } else {
+                        alert('Error stopping: ' + (data.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    console.error('Stop error:', error);
+                    alert('Failed to stop the measurement.');
+                }
+                return;
+            }
+            
+            // Start measurement (original logic)
+            const formData = new FormData();
+            formData.append('measure_mode', mode);
+            formData.append('target_board', targetBoard);
 
             // Collect data from the active settings group
             const activeSettingsGroup = document.querySelector('.settings-group.active');
@@ -302,40 +815,95 @@
                 const inputs = activeSettingsGroup.querySelectorAll('input[type="number"], input[type="text"], select'); // query for specific input types
                 inputs.forEach(input => {
                     if (!input.disabled && input.name) { // only include enabled inputs with a name
-                         params.append(input.name, input.value);
+                         formData.append(input.name, input.value);
                     }
                 });
-                // Handle file input separately to get file name
+                // Handle file input - don't send file, send pre-uploaded model data
                 const fileInput = activeSettingsGroup.querySelector('input[type="file"]');
-                if (fileInput && fileInput.files && fileInput.files.length > 0) {
-                    params.append(fileInput.name + '_name', fileInput.files[0].name);
-                    // Actual file upload would be handled here if not just sending name
-                    // For example, using FormData if the backend supports multipart/form-data
-                } else if (fileInput) {
-                    params.append(fileInput.name + '_name', ''); // Send empty if no file selected
+                if (fileInput) {
+                    // For control system mode with system, check if model data is available
+                    if (mode === 'control_system' && formData.get('cs_mode') === 'system') {
+                        if (uploadedModelData) {
+                            // Send the model data directly as JSON string
+                            formData.append('cs_model_data', JSON.stringify(uploadedModelData));
+                            const systemFileInput = document.getElementById('cs_system_file_input');
+                            formData.append('cs_model_file_input_name', systemFileInput.files[0]?.name || 'uploaded_model.mdl');
+                        } else {
+                            alert('Please upload a model file first using the Upload Model button.');
+                            return;
+                        }
+                    } else if (mode === 'control_system' && formData.get('cs_mode') === 'controller' && formData.get('cs_controller_type') === 'other') {
+                        if (uploadedModelData) {
+                            // Send the controller data directly as JSON string
+                            formData.append('cs_model_data', JSON.stringify(uploadedModelData));
+                            const controllerFileInput = document.getElementById('cs_model_file_input');
+                            formData.append('cs_model_file_input_name', controllerFileInput.files[0]?.name || 'uploaded_controller.ctl');
+                        } else {
+                            alert('Please upload a controller file first using the Upload Model button.');
+                            return;
+                        }
+                    } else if (fileInput.files && fileInput.files.length > 0) {
+                        formData.append(fileInput.name, fileInput.files[0]); // Send actual file for other modes
+                        formData.append(fileInput.name + '_name', fileInput.files[0].name);
+                    } else {
+                        formData.append(fileInput.name + '_name', ''); // Send empty if no file selected
+                    }
                 }
 
                  // Special handling for VA CH0/CH1 to ensure va_mode_type is CV
                 if (mode === 'va') {
                     const channel = document.getElementById('va_channel').value;
                     if (channel === 'CH0' || channel === 'CH1') {
-                        params.set('va_mode_type', 'CV'); // Ensure CV is sent
+                        formData.set('va_mode_type', 'CV'); // Ensure CV is sent
                     }
                 }
             }
 
-
-            const response = await fetch("{{ url_for('main.measure') }}", {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: params
+            // Clear the graph before starting new measurement
+            Plotly.newPlot(graphDiv, [], {
+                margin: { t: 30, b: 50, l: 60, r: 30 },
+                title: `${mode.toUpperCase()} - Starting...`
             });
-            const data = await response.json();
-            currentChartData = data; // Store data for export
-            plotData(data, mode);
-            exportCsvButton.disabled = !data || (Array.isArray(data) && data.length === 0) || (typeof data === 'object' && Object.keys(data).length === 0) ;
+
+            try {
+                const response = await fetch("{{ url_for('main.measure') }}", {
+                    method: 'POST',
+                    body: formData  // FormData automatically sets correct Content-Type with boundary
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentChartData = data; // Store data for export
+                    plotData(data, mode);
+                    exportCsvButton.disabled = !data || (Array.isArray(data) && data.length === 0) || (typeof data === 'object' && Object.keys(data).length === 0);
+                    
+                    // Update state for continuous modes
+                    if (isContinuousMode) {
+                        isContinuousRunning = true;
+                        updateMeasureButtonText();
+                        
+                        // Start continuous data polling for control system mode
+                        if (mode === 'control_system') {
+                            startContinuousDataPolling(targetBoard, mode);
+                        }
+                    } else if (mode === 'testbed') {
+                        // Testbed is continuous
+                        isContinuousRunning = true;
+                        updateMeasureButtonText();
+                        startContinuousDataPolling(targetBoard, mode);
+                    } else if (['va', 'bode', 'step', 'impulse'].includes(mode)) {
+                        // These modes are non-continuous measurements with progress tracking
+                        isContinuousRunning = true;
+                        updateMeasureButtonText();
+                        startMeasurementDataPolling(targetBoard, mode);
+                    }
+                } else {
+                    alert('Error starting measurement: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Measure error:', error);
+                alert('Failed to start measurement.');
+            }
         });
 
         exportCsvButton.addEventListener('click', async () => {
@@ -390,22 +958,39 @@
             document.getElementById('tb_out_c').textContent = '-';
             document.getElementById('tb_in_ch0').textContent = '-';
             document.getElementById('tb_in_ch1').textContent = '-';
-            document.getElementById('cs_status_text').textContent = '-';
-            document.getElementById('cs_file_info_text').textContent = '-';
+            // Note: Don't clear cs_status_text and cs_model_name_text here as they show upload status
 
             if (!data || ((Array.isArray(data) && data.length === 0)) || (typeof data === 'object' && !data.type && Object.keys(data).length === 0) ) { // Adjusted condition for CS data
                 return;
-            }            if (mode === 'va') {
-                plot = {
-                    x: data.map(p => p.voltage),
-                    y: data.map(p => p.current),
-                    type: 'scatter',
-                    mode: 'lines+markers'
-                };
-                layout.xaxis.title = 'Voltage (V)';
-                layout.yaxis.title = 'Current (A)';
-                layout.title = 'VA Characteristics';
-                Plotly.newPlot(graphDiv, [plot], layout);
+            }
+            
+            if (mode === 'va') {
+                if (data.type === "va_started") {
+                    // Handle VA measurement start
+                    layout.title = 'VA Characteristics - Collecting Data...';
+                    layout.xaxis.title = 'Voltage (V)';
+                    layout.yaxis.title = 'Current (A)';
+                    Plotly.newPlot(graphDiv, [], layout);
+                    console.log('[DEBUG] VA measurement started, data collection will begin');
+                } else if (Array.isArray(data) && data.length > 0) {
+                    // Handle accumulated VA data
+                    plot = {
+                        x: data.map(p => p.voltage),
+                        y: data.map(p => p.current),
+                        type: 'scatter',
+                        mode: 'lines+markers'
+                    };
+                    layout.xaxis.title = 'Voltage (V)';
+                    layout.yaxis.title = 'Current (A)';
+                    layout.title = 'VA Characteristics';
+                    Plotly.newPlot(graphDiv, [plot], layout);
+                } else {
+                    // Default empty plot
+                    layout.xaxis.title = 'Voltage (V)';
+                    layout.yaxis.title = 'Current (A)';
+                    layout.title = 'VA Characteristics';
+                    Plotly.newPlot(graphDiv, [], layout);
+                }
             } else if (mode === 'bode') {
                 const trace1 = {
                     x: data.map(p => p.frequency),
@@ -450,7 +1035,6 @@
                 // Optionally, could plot one of these values over time if desired, but for now, just text.
                 Plotly.newPlot(graphDiv, [], layout); // Keep graph area clean or show a relevant message
             } else if (mode === 'control_system') {
-                document.getElementById('cs_file_info_text').textContent = data.file_info || '-';
                 if (data.type === "pid_response" && data.data) {
                     plot = {
                         x: data.data.map(p => p.time),
@@ -461,11 +1045,39 @@
                     layout.xaxis.title = 'Time (s)';
                     layout.yaxis.title = 'System Response';
                     let params_str = "PID Params: " + Object.entries(data.params || {}).map(([k,v]) => `${k}=${v}`).join(', ');
-                    document.getElementById('cs_status_text').textContent = (data.status || "") + " | " + params_str;
+                    // Update status but don't overwrite upload status
+                    if (document.getElementById('cs_status_text').textContent.includes('uploaded')) {
+                        document.getElementById('cs_status_text').textContent += ` | ${data.status || ""}`;
+                    } else {
+                        document.getElementById('cs_status_text').textContent = data.status || "";
+                    }
                     layout.title = 'PID Controller Response';
                     Plotly.newPlot(graphDiv, [plot], layout);
+                } else if (data.type === "control_system_started") {
+                    // Handle the new control system started response
+                    const statusText = data.message || "Control system started";
+                    
+                    // Update status but don't overwrite upload status
+                    if (document.getElementById('cs_status_text').textContent.includes('uploaded')) {
+                        document.getElementById('cs_status_text').textContent += ` | Running`;
+                    } else {
+                        document.getElementById('cs_status_text').textContent = statusText;
+                    }
+                    
+                    // Set up initial empty graph for real-time data
+                    layout.title = 'Control System - Real-time Data (Waiting for data...)';
+                    layout.xaxis.title = 'Time (s)';
+                    layout.yaxis.title = 'Value';
+                    Plotly.newPlot(graphDiv, [], layout);
+                    
+                    console.log('[DEBUG] Control system started, real-time graphing will begin when data arrives');
                 } else {
-                    document.getElementById('cs_status_text').textContent = data.status || '-';
+                    // Update status but don't overwrite upload status  
+                    if (document.getElementById('cs_status_text').textContent.includes('uploaded')) {
+                        document.getElementById('cs_status_text').textContent += ` | ${data.status || ""}`;
+                    } else {
+                        document.getElementById('cs_status_text').textContent = data.status || "";
+                    }
                     layout.title = 'Control Systems Toolbox - Status';
                     Plotly.newPlot(graphDiv, [], layout); // Clear graph or show general status
                 }

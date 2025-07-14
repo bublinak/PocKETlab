@@ -5,6 +5,7 @@ from app.models import User
 import csv
 from io import StringIO
 import numpy as np # For linspace and logspace
+import json
 
 main_bp = Blueprint('main', __name__)
 
@@ -334,18 +335,148 @@ def measure():
         return jsonify(data)
     else:
         try:
+            print(f"[DEBUG] Starting /measure endpoint processing")
             measure_mode = request.form.get('measure_mode')
-            settings = {k: v for k, v in request.form.items() if k != 'measure_mode' and k != 'target_board'}
+            print(f"[DEBUG] measure_mode: {measure_mode}")
+            # Remove cs_model_file_input_name and cs_model_data from settings to avoid sending raw data
+            settings = {k: v for k, v in request.form.items() if k not in ['measure_mode', 'target_board', 'cs_model_file_input_name', 'cs_model_data']}
+            print(f"[DEBUG] settings: {settings}")
             target_board = request.form.get('target_board', 'default')
+            print(f"[DEBUG] target_board: {target_board}")
 
-            message_id = mqtt_client.publish_command(measure_mode, settings, target_board)
+            # Special handling for control system mode (system)
+            if measure_mode == 'control_system' and settings.get('cs_mode') == 'system':
+                print(f"[DEBUG] Processing control system mode with cs_mode=system")
+                print(f"[DEBUG] request.files keys: {list(request.files.keys())}")
+                print(f"[DEBUG] request.form keys: {list(request.form.keys())}")
+                
+                # Check if model data was sent as JSON string (new method)
+                model_data_str = request.form.get('cs_model_data')
+                if model_data_str:
+                    print(f"[DEBUG] Found pre-uploaded model data")
+                    try:
+                        mdl_data = json.loads(model_data_str)
+                        print(f"[DEBUG] Model data parsing successful, keys: {list(mdl_data.keys())}")
+                    except Exception as e:
+                        print(f"[DEBUG] ERROR: Model data parsing failed: {e}")
+                        return jsonify({"error": f"Failed to parse model data: {e}"}), 400
+                else:
+                    # Fallback to file upload method
+                    mdl_file = request.files.get('cs_model_file_input')
+                    print(f"[DEBUG] mdl_file: {mdl_file}")
+                    if mdl_file:
+                        print(f"[DEBUG] mdl_file.filename: {mdl_file.filename}")
+                    
+                    if not mdl_file:
+                        print(f"[DEBUG] ERROR: No model file uploaded and no model data provided")
+                        return jsonify({"error": "No model file uploaded. Please use the Upload Model button first."}), 400
+                    if not mdl_file.filename.endswith('.mdl'):
+                        print(f"[DEBUG] ERROR: Wrong file extension: {mdl_file.filename}")
+                        return jsonify({"error": f"Uploaded file '{mdl_file.filename}' is not a .mdl file."}), 400
+                    
+                    mdl_file.seek(0, 2)  # Seek to end to check size
+                    file_size = mdl_file.tell()
+                    mdl_file.seek(0)  # Reset to start
+                    print(f"[DEBUG] File size: {file_size} bytes")
+                    
+                    if file_size == 0:
+                        print(f"[DEBUG] ERROR: Empty file")
+                        return jsonify({"error": "Uploaded .mdl file is empty."}), 400
+                    
+                    try:
+                        mdl_data = json.load(mdl_file)
+                        print(f"[DEBUG] JSON parsing successful, keys: {list(mdl_data.keys())}")
+                    except Exception as e:
+                        print(f"[DEBUG] ERROR: JSON parsing failed: {e}")
+                        return jsonify({"error": f"Failed to parse uploaded model file as JSON: {e}"}), 400
+                
+                # Validate required fields in mdl_data
+                required_fields = ['matrices', 'input_voltage_range', 'output_voltage_range', 'input_mapping', 'output_mapping']
+                missing_fields = [f for f in required_fields if f not in mdl_data]
+                if missing_fields:
+                    print(f"[DEBUG] ERROR: Missing required fields: {missing_fields}")
+                    return jsonify({"error": f"Model file missing required fields: {', '.join(missing_fields)}"}), 400
+                
+                print(f"[DEBUG] All required fields present")
+                
+                try:
+                    settings['system_model'] = {
+                        'A': mdl_data['matrices']['A'],
+                        'B': mdl_data['matrices']['B'],
+                        'C': mdl_data['matrices']['C'],
+                        'D': mdl_data['matrices']['D'],
+                        'input_voltage_range': mdl_data['input_voltage_range'],
+                        'output_voltage_range': mdl_data['output_voltage_range'],
+                        'input_mapping': mdl_data['input_mapping'],
+                        'output_mapping': mdl_data['output_mapping'],
+                        'system_name': mdl_data.get('system_name'),
+                        'system_type': mdl_data.get('system_type')
+                    }
+                    print(f"[DEBUG] Model data successfully added to settings")
+                except Exception as e:
+                    print(f"[DEBUG] ERROR: Model structure error: {e}")
+                    return jsonify({"error": f"Model file structure error: {e}"}), 400
+
+            print(f"[DEBUG] Final settings being sent to device: {settings}")
             
-            # Wait for the response from the board
-            response_data = mqtt_client.get_data(message_id, timeout=15)
-
+            # Flush graph buffers before starting new measurement
+            print(f"[DEBUG] Flushing buffers for board: {target_board}, mode: {measure_mode}")
+            mqtt_client.flush_mode_buffer(target_board, measure_mode)
+            
+            message_id = mqtt_client.publish_command(measure_mode, settings, target_board)
+            print(f"[DEBUG] MQTT message_id: {message_id}")
+            
+            # Wait for the response from the board to confirm command was received
+            print(f"[DEBUG] Waiting for response with message_id: {message_id}")
+            response_data = mqtt_client.get_data(message_id, timeout=5)
+            
+            # If no direct message_id match, try to get response by board_id and mode
+            if not response_data:
+                print(f"[DEBUG] No direct message_id match, trying board_id/mode correlation")
+                response_data = mqtt_client.get_response_by_board_mode(target_board, measure_mode, timeout=10)
+            
             if response_data:
-                return jsonify(response_data.get('payload', {}).get('data', []))
+                print(f"[DEBUG] Received response: {response_data}")
+                response_payload = response_data.get('payload', {})
+                response_status = response_payload.get('status')
+                response_message = response_payload.get('message', '')
+                response_mode = response_payload.get('mode')
+                
+                if response_status == 'success':
+                    print(f"[DEBUG] {measure_mode} command accepted by device")
+                    
+                    # For continuous modes (testbed, control_system), return streaming started
+                    if measure_mode in ['testbed', 'control_system']:
+                        return jsonify({
+                            "status": "started",
+                            "message": response_message or f"{measure_mode.replace('_', ' ').title()} mode started successfully. Data will be streamed in real-time.",
+                            "type": f"{measure_mode}_started",
+                            "mode": settings.get('cs_mode', 'unknown') if measure_mode == 'control_system' else measure_mode,
+                            "estimated_duration": response_payload.get('estimated_duration')
+                        })
+                    
+                    # For measurement modes (va, bode, step, impulse), return streaming started
+                    elif measure_mode in ['va', 'bode', 'step', 'impulse']:
+                        return jsonify({
+                            "status": "started", 
+                            "message": response_message or f"{measure_mode.upper()} measurement started successfully. Data will be collected in real-time.",
+                            "type": f"{measure_mode}_started",
+                            "mode": measure_mode,
+                            "estimated_duration": response_payload.get('estimated_duration')
+                        })
+                    
+                    # For other modes, return the response data directly
+                    else:
+                        return jsonify(response_payload.get('data', []))
+                        
+                else:
+                    # Command failed
+                    error_msg = response_message or f"Device rejected {measure_mode} command"
+                    print(f"[DEBUG] Device rejected command: {error_msg}")
+                    return jsonify({"error": error_msg}), 400
+                    
             else:
+                print(f"[DEBUG] No response received from device")
                 return jsonify({"error": "Request timed out. No response from device."}), 504
 
         except ConnectionError as e:
@@ -353,6 +484,55 @@ def measure():
         except Exception as e:
             return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
 
+@main_bp.route('/stop', methods=['POST'])
+@login_required
+def stop():
+    """Stop continuous measurement modes (testbed, control systems)"""
+    try:
+        print(f"[DEBUG] Stop endpoint called")
+        measure_mode = request.form.get('measure_mode')
+        target_board = request.form.get('target_board', 'default')
+        print(f"[DEBUG] Stopping measure_mode: {measure_mode}, target_board: {target_board}")
+        
+        if measure_mode in ['testbed', 'control_system']:
+            # Send stop command via MQTT
+            if not current_app.config.get('MOCK_ON'):
+                from app import mqtt_client
+                if mqtt_client and mqtt_client.is_connected():
+                    import uuid
+                    import time
+                    
+                    # Create proper MQTT API compliant stop command
+                    command = {
+                        "timestamp": str(int(time.time() * 1000)),
+                        "message_id": str(uuid.uuid4()),
+                        "type": "command",
+                        "payload": {
+                            "mode": measure_mode,
+                            "action": "stop"
+                        }
+                    }
+                    topic = f"pocketlab/{target_board}/command"  # Use 'command' not 'commands'
+                    mqtt_client.client.publish(topic, json.dumps(command), qos=1)
+                    print(f"[DEBUG] Published stop command to {topic}: {command}")
+                    
+                    # Clear continuous data buffer for this board
+                    mqtt_client.clear_continuous_data(target_board)
+                    print(f"[DEBUG] Cleared continuous data for board: {target_board}")
+                    
+            return jsonify({
+                "status": "stopped",
+                "message": f"{measure_mode.replace('_', ' ').title()} mode stopped successfully"
+            })
+        else:
+            return jsonify({
+                "status": "not_applicable", 
+                "message": "Stop is only applicable for continuous modes"
+            })
+            
+    except Exception as e:
+        print(f"[DEBUG] ERROR in stop endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @main_bp.route('/export_csv', methods=['POST'])
 @login_required
@@ -389,3 +569,129 @@ def export_csv():
         mimetype="text/csv",
         headers={"Content-disposition":
                  "attachment; filename=measurement_data.csv"})
+
+@main_bp.route('/get_continuous_data', methods=['GET'])
+@login_required
+def get_continuous_data():
+    """Get continuous data from MQTT for real-time graphing"""
+    try:
+        board_id = request.args.get('board_id', 'default')
+        mode = request.args.get('mode', 'control_system')
+        print(f"[DEBUG] Getting continuous data for board: {board_id}, mode: {mode}")
+        
+        if current_app.config.get('MOCK_ON'):
+            # Return mock data for testing based on mode (ONLY continuous modes)
+            if mode == 'testbed':
+                import numpy as np
+                mock_data = {
+                    "mode": "testbed",
+                    "readings": {
+                        "output_voltage": round(3.3 + np.random.rand() * 0.1, 3),
+                        "output_current": round(0.15 + np.random.rand() * 0.05, 4),
+                        "input_ch0": round(2.5 + np.random.rand() * 0.5, 3),
+                        "input_ch1": round(1.8 + np.random.rand() * 0.3, 3)
+                    },
+                    "status": "regulating",
+                    "continuous": True
+                }
+                return jsonify(mock_data)
+            elif mode == 'control_system':
+                import numpy as np
+                import time
+                current_time = int(time.time() * 1000)  # milliseconds
+                timestamps = [current_time + i * 100 for i in range(10)]
+                inputs = (np.random.rand(10) - 0.5) * 2  # Random values between -1 and 1
+                states_x1 = np.cumsum(np.random.randn(10) * 10)  # Random walk
+                states_x2 = np.cumsum(np.random.randn(10) * 20)  # Random walk
+                
+                mock_data = {
+                    "type": "data",
+                    "mode": "control_system", 
+                    "payload": {
+                        "sample_count": 10,
+                        "frequency_hz": 10,
+                        "continuous": True,
+                        "timestamps": timestamps,
+                        "inputs": inputs.tolist(),
+                        "states_x1": states_x1.tolist(),
+                        "states_x2": states_x2.tolist(),
+                        "outputs_y1": states_x1.tolist(),  # Same as states for this example
+                        "outputs_y2": states_x2.tolist()
+                    }
+                }
+                return jsonify([mock_data])
+            else:
+                return jsonify([])
+        
+        from app import mqtt_client
+        if mqtt_client:
+            if mode == 'control_system':
+                # Get control system data (returns list of data packets)
+                continuous_data = mqtt_client.get_control_system_data(board_id)
+                print(f"[DEBUG] Retrieved {len(continuous_data)} control system data points")
+                return jsonify(continuous_data)
+            elif mode == 'testbed':
+                # Get latest testbed readings
+                testbed_data = mqtt_client.get_testbed_data(board_id)
+                print(f"[DEBUG] Retrieved testbed data: {testbed_data}")
+                return jsonify(testbed_data if testbed_data else {})
+            else:
+                print(f"[DEBUG] Mode {mode} is not a continuous mode")
+                return jsonify({})
+        else:
+            return jsonify({})
+            
+    except Exception as e:
+        print(f"[DEBUG] ERROR in get_continuous_data: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@main_bp.route('/get_measurement_data', methods=['GET'])
+@login_required
+def get_measurement_data():
+    """Get measurement data for non-continuous modes (VA, Bode, Step, Impulse)"""
+    try:
+        board_id = request.args.get('board_id', 'default')
+        mode = request.args.get('mode', 'va')
+        print(f"[DEBUG] Getting measurement data for board: {board_id}, mode: {mode}")
+        
+        if current_app.config.get('MOCK_ON'):
+            # Return mock data for testing based on mode
+            if mode == 'va':
+                import numpy as np
+                mock_data = {
+                    "mode": "va",
+                    "data": [
+                        {"voltage": float(v), "current": float(v * 0.001 + np.random.rand() * 0.0001)}
+                        for v in np.arange(0, 5, 0.1)
+                    ],
+                    "progress": min(100, np.random.rand() * 100),
+                    "completed": np.random.rand() > 0.8
+                }
+                return jsonify(mock_data)
+            elif mode in ['bode', 'step', 'impulse']:
+                import numpy as np
+                mock_data = {
+                    "mode": mode,
+                    "data": [
+                        {"x": float(x), "y": float(np.sin(x) + np.random.rand() * 0.1)}
+                        for x in np.arange(0, 10, 0.1)
+                    ],
+                    "progress": min(100, np.random.rand() * 100),
+                    "completed": np.random.rand() > 0.8
+                }
+                return jsonify(mock_data)
+            else:
+                return jsonify({})
+        
+        from app import mqtt_client
+        if mqtt_client and mode in ['va', 'bode', 'step', 'impulse']:
+            # Get accumulated measurement data for non-continuous modes
+            measurement_data = mqtt_client.get_measurement_data(board_id, mode)
+            print(f"[DEBUG] Retrieved {mode} data: {len(measurement_data.get('data', [])) if measurement_data else 0} points")
+            return jsonify(measurement_data if measurement_data else {})
+        else:
+            return jsonify({})
+            
+    except Exception as e:
+        print(f"[DEBUG] ERROR in get_measurement_data: {e}")
+        return jsonify({"error": str(e)}), 500

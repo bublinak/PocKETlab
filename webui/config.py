@@ -7,7 +7,7 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # MQTT Configuration
-    MQTT_BROKER_URL = os.environ.get('MQTT_BROKER_URL') or 'broker.emqx.io'
+    MQTT_BROKER_URL = os.environ.get('MQTT_BROKER_URL') or 'homeserver'
     MQTT_BROKER_PORT = int(os.environ.get('MQTT_BROKER_PORT') or 1883)
     MQTT_USERNAME = os.environ.get('MQTT_USERNAME') or ''
     MQTT_PASSWORD = os.environ.get('MQTT_PASSWORD') or ''

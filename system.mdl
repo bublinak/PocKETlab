@@ -1,0 +1,52 @@
+{
+  "system_name": "Mathematical pendulum",
+  "system_type": "State-Space",
+  "matrices": {
+    "A": [
+      [0.0, 1.0],
+      [-20.0, -0.3]
+    ],
+    "B": [
+      [0.0],
+      [1.0]
+    ],
+    "C": [
+      [1.0, 0.0],
+      [0.0, 1.0]
+    ],
+    "D": [
+      [0.0],
+      [0.0]
+    ]
+  },
+  "input_voltage_range": {
+    "min_volts": 0.0,
+    "max_volts": 3.0,
+    "zero_offset": 0
+  },
+  "output_voltage_range": {
+    "min_volts": 0.0,
+    "max_volts": 3.0,
+    "zero_offset": 1.5
+  },
+  "input_mapping": [
+    {
+      "input_name": "Force /10",
+      "matrix_column_index": 0
+    },
+    {
+      "input_name": "Angular acceleration",
+      "matrix_column_index": 1
+    }
+  ],
+  "output_mapping": [
+    {
+      "output_name": "Angle",
+      "matrix_row_index": 0
+    },
+    {
+      "output_name": "Angular velocity",
+      "matrix_row_index": 1
+    }
+  ]
+}

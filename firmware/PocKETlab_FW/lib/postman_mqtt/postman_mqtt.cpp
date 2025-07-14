@@ -20,7 +20,7 @@ void PostmanMQTT::loop() {
 
 // Publish a message to a topic
 void PostmanMQTT::publish(const char* topic, const JsonDocument& doc) {
-    char buffer[512];
+    char buffer[4096];
     serializeJson(doc, buffer);
     String full_topic = "pocketlab/" + _board_id + "/" + topic;
     _client.publish(full_topic.c_str(), buffer);
@@ -33,7 +33,7 @@ void PostmanMQTT::subscribe(const char* topic) {
 }
 
 void PostmanMQTT::sendStatus(const char* device_status, const char* current_mode, float progress) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
 
     // Get timestamp and message_id
     // Note: This is a simplified timestamp. For true ISO8601, a library would be needed.
@@ -44,7 +44,7 @@ void PostmanMQTT::sendStatus(const char* device_status, const char* current_mode
     doc["message_id"] = "status-" + String(millis());
     doc["type"] = "status";
 
-    JsonObject payload = doc.createNestedObject("payload");
+    JsonObject payload = doc["payload"].to<JsonObject>();
     payload["device_status"] = device_status;
     payload["current_mode"] = current_mode;
     if (progress >= 0.0) {
@@ -55,7 +55,7 @@ void PostmanMQTT::sendStatus(const char* device_status, const char* current_mode
 }
 
 void PostmanMQTT::sendResponse(const char* mode, const char* status, const char* message, int estimated_duration) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
 
     char timestamp[30];
     snprintf(timestamp, sizeof(timestamp), "%lu", millis());
@@ -64,7 +64,7 @@ void PostmanMQTT::sendResponse(const char* mode, const char* status, const char*
     doc["message_id"] = "response-" + String(millis());
     doc["type"] = "response";
 
-    JsonObject payload = doc.createNestedObject("payload");
+    JsonObject payload = doc["payload"].to<JsonObject>();
     payload["mode"] = mode;
     payload["status"] = status;
     payload["message"] = message;
@@ -76,7 +76,7 @@ void PostmanMQTT::sendResponse(const char* mode, const char* status, const char*
 }
 
 void PostmanMQTT::sendError(const char* error_code, const char* error_message, const char* context_mode, const char* context_parameter, const char* context_value, const char* suggested_action) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
 
     char timestamp[30];
     snprintf(timestamp, sizeof(timestamp), "%lu", millis());
@@ -85,12 +85,12 @@ void PostmanMQTT::sendError(const char* error_code, const char* error_message, c
     doc["message_id"] = "error-" + String(millis());
     doc["type"] = "status"; // Error messages are a type of status message
 
-    JsonObject payload = doc.createNestedObject("payload");
+    JsonObject payload = doc["payload"].to<JsonObject>();
     payload["error"] = true;
     payload["error_code"] = error_code;
     payload["error_message"] = error_message;
 
-    JsonObject error_context = payload.createNestedObject("error_context");
+    JsonObject error_context = payload["error_context"].to<JsonObject>();
     error_context["mode"] = context_mode;
     error_context["parameter"] = context_parameter;
     error_context["value"] = context_value;

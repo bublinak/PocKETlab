@@ -2,6 +2,8 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <esp_task_wdt.h>
+#include <esp_system.h>
 //#include <SmartLEDs.h> // Corrected to SmartLEDs.h
 #include "pin_definitions.h"
 #include "pd_control.h"
@@ -32,7 +34,7 @@ NetMan netManager("PocKETlab", "admin123");
 PocKETlabIO pocketlabIO;
 
 // MQTT and Driver Control
-const char* mqtt_server = "broker.emqx.io"; // <<< CHANGE TO YOUR MQTT BROKER
+const char* mqtt_server = "10.0.0.42"; // <<< CHANGE TO YOUR MQTT BROKER
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
@@ -46,7 +48,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print("Message arrived in topic: ");
     Serial.println(topic);
 
-    StaticJsonDocument<2048> doc;
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, payload, length);
 
     if (error) {
@@ -96,6 +98,28 @@ void setup()
 {
 	delay(1000); // Wait for USB CDC to initialize
 	Serial.begin(115200);
+	
+	// Check reset reason to help debug reset issues
+	esp_reset_reason_t reset_reason = esp_reset_reason();
+	Serial.print("Reset reason: ");
+	switch (reset_reason) {
+		case ESP_RST_POWERON: Serial.println("Power-on reset"); break;
+		case ESP_RST_EXT: Serial.println("External reset"); break;
+		case ESP_RST_SW: Serial.println("Software reset"); break;
+		case ESP_RST_PANIC: Serial.println("Exception/panic reset"); break;
+		case ESP_RST_INT_WDT: Serial.println("Interrupt watchdog reset"); break;
+		case ESP_RST_TASK_WDT: Serial.println("Task watchdog reset"); break;
+		case ESP_RST_WDT: Serial.println("Other watchdog reset"); break;
+		case ESP_RST_DEEPSLEEP: Serial.println("Deep sleep reset"); break;
+		case ESP_RST_BROWNOUT: Serial.println("Brownout reset"); break;
+		case ESP_RST_SDIO: Serial.println("SDIO reset"); break;
+		default: Serial.printf("Unknown reset (%d)\n", reset_reason); break;
+	}
+	
+	// Print memory info
+	Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
+	Serial.printf("Min free heap: %d bytes\n", ESP.getMinFreeHeap());
+	Serial.printf("Heap size: %d bytes\n", ESP.getHeapSize());
 
 	// Initialize PocKETlab I/O system
 	Serial.println("Initializing PocKETlab I/O...");
@@ -197,25 +221,28 @@ void setup()
     // Setup MQTT after WiFi is connected
     if (netManager.isConnected()) {
         Serial.println("Setting up MQTT...");
-        postman.setup(mqtt_server, 1883, callback, 2048);
+        postman.setup(mqtt_server, 1883, callback, 8192);  // Increased buffer for large control system JSON
 		postman.subscribe("command");
     }
 }
 
 void loop()
 {
+	// Feed the watchdog to prevent resets
+	//esp_task_wdt_reset();
+	
 	// Handle network manager operations
 	netManager.loop();
 
     // Handle MQTT client loop
     if (netManager.isConnected()) {
         postman.loop();
-        //driver.loop(); // Handle driver tasks
+        driver.loop(); // Handle driver tasks
     }
 
-	// Print status info every 10 seconds
+	// Print status info every 10 seconds (reduced frequency to avoid I/O overload)
 	static unsigned long lastStatusPrint = 0;
-	if (millis() - lastStatusPrint > 3000 && true) //disable periodic status printing
+	if (millis() - lastStatusPrint > 10000 && true) // Temporarily disabled for debugging
 	{
 		lastStatusPrint = millis();
 
@@ -228,7 +255,7 @@ void loop()
 			{
 				Serial.println("mDNS: " + netManager.getMDNSName() + ".local");
 			}
-			postman.sendStatus("ready", "none");
+			postman.sendStatus("ready", driver.getCurrentMode());
 		}
 		else
 		{
@@ -257,4 +284,16 @@ void loop()
 	}
 	// Wait a bit before next iteration
 	delay(100);
+	
+	// Monitor memory usage every minute to detect leaks
+	static unsigned long lastMemoryCheck = 0;
+	if (millis() - lastMemoryCheck > 60000) {
+		lastMemoryCheck = millis();
+		Serial.printf("Memory check - Free heap: %d bytes, Min free: %d bytes\n", 
+					  ESP.getFreeHeap(), ESP.getMinFreeHeap());
+		
+		if (ESP.getFreeHeap() < 50000) {
+			Serial.println("WARNING: Low memory detected!");
+		}
+	}
 }
