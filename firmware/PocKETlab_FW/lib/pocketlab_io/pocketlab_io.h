@@ -100,6 +100,24 @@ public:
     bool isInitialized() const { return _initialized; }
     void printStatus();
 
+    // === DA Channels (MCU-direct I/O) ===
+    // Channels: 0..3 map to PIN_DA0..PIN_DA3
+    // Capabilities: digital input/output, analog input (no analog output)
+    void configureDA(uint8_t channel, uint8_t mode, bool pullup = false); // mode: INPUT/OUTPUT/INPUT_PULLUP
+    void digitalWriteDA(uint8_t channel, bool level);
+    int  digitalReadDA(uint8_t channel);
+    float analogReadDA(uint8_t channel); // returns voltage (0..3.3V typical)
+
+    // Optional PWM-based analog-style write (0..3.3V mapped to duty cycle)
+    void analogWriteDAVoltage(uint8_t channel, float voltage_v);
+
+    // === DB Channels (GPIO33..36) ===
+    // Exposed as general-purpose lines; allow digital I/O and PWM-based analog-style output
+    void configureDB(uint8_t channel, uint8_t mode, bool pullup = false);
+    void digitalWriteDB(uint8_t channel, bool level);
+    int  digitalReadDB(uint8_t channel);
+    void analogWriteDBVoltage(uint8_t channel, float voltage_v);
+
 private:
     // Hardware objects
     MCP3202 *_signalADC;      // U8 - Signal ADC (MCP3202)
@@ -124,6 +142,19 @@ private:
     
     // Temperature calculation helper
     float _calculateTemperature(uint16_t rawADC);
+    // DA channel helper
+    int _mapDA(uint8_t channel);
+    // DB channel helper
+    int _mapDB(uint8_t channel);
+
+    // PWM/LEDC helpers
+    void _ensureLEDCSetup(uint8_t channel, uint8_t timer, uint32_t freq_hz, uint8_t resolution_bits);
+    void _attachLEDC(uint8_t channel, int pin);
+    void _analogWriteVoltageLEDC(uint8_t ledc_channel, int pin, float voltage_v);
+
+    // Track PWM init state
+    bool _ledc_initialized;
+    bool _ledc_channel_attached[16];
 };
 
 #endif // POCKETLAB_IO_H

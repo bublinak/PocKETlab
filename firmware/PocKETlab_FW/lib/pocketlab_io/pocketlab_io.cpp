@@ -3,7 +3,9 @@
 PocKETlabIO::PocKETlabIO() 
     : _signalADC(nullptr), _signalDAC(nullptr), _powerDAC(nullptr),
       _adcRefVoltage(ADC_REFERENCE_VOLTAGE), _dacRefVoltage(DAC_REFERENCE_VOLTAGE),
-      _initialized(false), _spiSettings(1000000, MSBFIRST, SPI_MODE0) {
+            _initialized(false), _spiSettings(1000000, MSBFIRST, SPI_MODE0) {
+        _ledc_initialized = false;
+        for (int i = 0; i < 16; ++i) _ledc_channel_attached[i] = false;
 }
 
 bool PocKETlabIO::begin() {
@@ -358,4 +360,129 @@ float PocKETlabIO::_calculateTemperature(uint16_t rawADC) {
     float temperature = 25.0 + (voltage - _adcRefVoltage/2.0) * 50.0;
     
     return temperature;
+}
+
+// === DA channels (MCU-direct I/O) ===
+
+int PocKETlabIO::_mapDA(uint8_t channel) {
+    switch (channel) {
+        case 0: return PIN_DA0;
+        case 1: return PIN_DA1;
+        case 2: return PIN_DA2;
+        case 3: return PIN_DA3;
+        default: return -1;
+    }
+}
+
+void PocKETlabIO::configureDA(uint8_t channel, uint8_t mode, bool pullup) {
+    int pin = _mapDA(channel);
+    if (pin < 0) return;
+    if (mode == INPUT && pullup) {
+        pinMode(pin, INPUT_PULLUP);
+    } else {
+        pinMode(pin, mode);
+    }
+}
+
+void PocKETlabIO::digitalWriteDA(uint8_t channel, bool level) {
+    int pin = _mapDA(channel);
+    if (pin < 0) return;
+    pinMode(pin, OUTPUT); // ensure output
+    digitalWrite(pin, level ? HIGH : LOW);
+}
+
+int PocKETlabIO::digitalReadDA(uint8_t channel) {
+    int pin = _mapDA(channel);
+    if (pin < 0) return 0;
+    pinMode(pin, INPUT);
+    return digitalRead(pin) == HIGH ? 1 : 0;
+}
+
+float PocKETlabIO::analogReadDA(uint8_t channel) {
+    int pin = _mapDA(channel);
+    if (pin < 0) return 0.0f;
+    pinMode(pin, INPUT);
+    uint16_t raw = analogRead(pin);
+    return (float)raw * 3.3f / 4095.0f; // Scale to voltage (assuming 3.3V ref)
+}
+
+void PocKETlabIO::analogWriteDAVoltage(uint8_t channel, float voltage_v) {
+    int pin = _mapDA(channel);
+    if (pin < 0) return;
+    _analogWriteVoltageLEDC(/*ledc_channel*/ channel, pin, voltage_v);
+}
+
+// === DB channels (GPIO33..36) ===
+int PocKETlabIO::_mapDB(uint8_t channel) {
+    switch (channel) {
+        case 0: return PIN_DB0;
+        case 1: return PIN_DB1;
+        case 2: return PIN_DB2;
+        case 3: return PIN_DB3;
+        default: return -1;
+    }
+}
+
+void PocKETlabIO::configureDB(uint8_t channel, uint8_t mode, bool pullup) {
+    int pin = _mapDB(channel);
+    if (pin < 0) return;
+    if (mode == INPUT && pullup) {
+        pinMode(pin, INPUT_PULLUP);
+    } else {
+        pinMode(pin, mode);
+    }
+}
+
+void PocKETlabIO::digitalWriteDB(uint8_t channel, bool level) {
+    int pin = _mapDB(channel);
+    if (pin < 0) return;
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, level ? HIGH : LOW);
+}
+
+int PocKETlabIO::digitalReadDB(uint8_t channel) {
+    int pin = _mapDB(channel);
+    if (pin < 0) return 0;
+    pinMode(pin, INPUT);
+    return digitalRead(pin) == HIGH ? 1 : 0;
+}
+
+void PocKETlabIO::analogWriteDBVoltage(uint8_t channel, float voltage_v) {
+    // Use LEDC channels 4..7 for DB0..DB3
+    int ledc_ch = 4 + channel;
+    int pin = _mapDB(channel);
+    if (pin < 0) return;
+    _analogWriteVoltageLEDC((uint8_t)ledc_ch, pin, voltage_v);
+}
+
+// === LEDC helpers ===
+void PocKETlabIO::_ensureLEDCSetup(uint8_t channel, uint8_t timer, uint32_t freq_hz, uint8_t resolution_bits) {
+    // Only need to call ledcSetup once per channel
+    if (!_ledc_initialized) {
+        _ledc_initialized = true; // marker; per-channel setup tracked separately
+    }
+    if (!_ledc_channel_attached[channel]) {
+        ledcSetup(channel, freq_hz, resolution_bits);
+    }
+}
+
+void PocKETlabIO::_attachLEDC(uint8_t channel, int pin) {
+    if (!_ledc_channel_attached[channel]) {
+        ledcAttachPin(pin, channel);
+        _ledc_channel_attached[channel] = true;
+    }
+}
+
+void PocKETlabIO::_analogWriteVoltageLEDC(uint8_t ledc_channel, int pin, float voltage_v) {
+    // Clamp voltage 0..3.3V
+    if (voltage_v < 0.0f) voltage_v = 0.0f;
+    if (voltage_v > 3.3f) voltage_v = 3.3f;
+    // Configure LEDC channel at 5kHz, 10-bit resolution
+    const uint32_t freq = 5000;
+    const uint8_t bits = 10;
+    _ensureLEDCSetup(ledc_channel, /*timer*/ 0, freq, bits);
+    _attachLEDC(ledc_channel, pin);
+    uint32_t max_duty = (1u << bits) - 1u;
+    uint32_t duty = (uint32_t)((voltage_v / 3.3f) * (float)max_duty + 0.5f);
+    ledcWrite(ledc_channel, duty);
 }

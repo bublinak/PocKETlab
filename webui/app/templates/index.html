@@ -34,15 +34,17 @@
             <h3>VA Settings</h3>
             <label for="va_channel">Channel:</label>
             <select id="va_channel" name="va_channel">
-                <option value="CH0">CH0 (CV Only)</option>
-                <option value="CH1">CH1 (CV Only)</option>
-                <option value="CH2">CH2 (CV/CC)</option>
+                <option value="CH0">CH0</option>
+                <option value="CH1">CH1</option>
+                <option value="CH2">CH2</option>
             </select>
-            <label for="va_mode_type">Mode (CH2 Only):</label>
-            <select id="va_mode_type" name="va_mode_type" disabled>
+            <label for="va_mode_type">Mode:</label>
+            <select id="va_mode_type" name="va_mode_type">
                 <option value="CV">CV (Constant Voltage)</option>
                 <option value="CC">CC (Constant Current)</option>
             </select>
+            <label for="va_shunt_resistance">Shunt Resistance (Ohms):</label>
+            <input type="number" id="va_shunt_resistance" name="va_shunt_resistance" value="1.0" step="0.001" min="0.001">
             <div id="va_cv_settings">
                 <label for="va_start_voltage">Start Voltage (V):</label>
                 <input type="number" id="va_start_voltage" name="va_start_voltage" value="0" step="0.1">
@@ -119,6 +121,64 @@
             <div>Output Current: <span id="tb_out_c">-</span> A</div>
             <div>Input CH0: <span id="tb_in_ch0">-</span> V</div>
             <div>Input CH1: <span id="tb_in_ch1">-</span> V</div>
+
+            <h3 style="margin-top:16px;">Selected Applet Properties</h3>
+            <div id="tb_props_none">Select an applet in the grid.</div>
+            <div id="tb_props_panel" style="display:none;">
+                <div><strong>Type:</strong> <span id="tb_prop_type"></span></div>
+                <label for="tb_prop_bind">Bind Signal</label>
+                <select id="tb_prop_bind">
+                    <option value="output_voltage">Output Voltage</option>
+                    <option value="output_current">Output Current</option>
+                    <option value="input_ch0">Input CH0</option>
+                    <option value="input_ch1">Input CH1</option>
+                    <option value="da0">DA0</option>
+                    <option value="da1">DA1</option>
+                    <option value="da2">DA2</option>
+                    <option value="da3">DA3</option>
+                    <option value="db0">DB0</option>
+                    <option value="db1">DB1</option>
+                    <option value="db2">DB2</option>
+                    <option value="db3">DB3</option>
+                </select>
+
+                <div id="tb_prop_minmax" style="display:none;">
+                    <label for="tb_prop_min">Min</label>
+                    <input id="tb_prop_min" type="number" step="0.01">
+                    <label for="tb_prop_max">Max</label>
+                    <input id="tb_prop_max" type="number" step="0.01">
+                </div>
+                <div id="tb_prop_timewin" style="display:none;">
+                    <label for="tb_prop_time">Graph Length (s)</label>
+                    <input id="tb_prop_time" type="number" step="0.5" min="1" value="10">
+                </div>
+                <div id="tb_prop_slider_target" style="display:none;">
+                    <label for="tb_prop_slider_for">Slider Controls</label>
+                    <select id="tb_prop_slider_for">
+                        <option value="target_voltage">Target Voltage</option>
+                        <option value="current_limit">Current Limit</option>
+                    </select>
+                </div>
+                <div id="tb_prop_button_opts" style="display:none;">
+                    <label for="tb_prop_bus">Pin Group</label>
+                    <select id="tb_prop_bus">
+                        <option value="da">DA</option>
+                        <option value="db">DB</option>
+                    </select>
+                    <label for="tb_prop_pin">Pin Index</label>
+                    <select id="tb_prop_pin">
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                    </select>
+                    <label for="tb_prop_button_mode">Mode</label>
+                    <select id="tb_prop_button_mode">
+                        <option value="toggle">Toggle</option>
+                        <option value="click">Click</option>
+                    </select>
+                </div>
+            </div>
         </div>
 
         <!-- Control Systems Toolbox Settings -->
@@ -175,10 +235,27 @@
 
         <button id="measure_button">Measure</button>
         <button id="export_csv_button" disabled>Export CSV</button>
+        <div id="export_dialog" style="display:none; position:absolute; left:10px; bottom:20px; width:240px; background:#222; padding:12px; border:1px solid #444; border-radius:6px; z-index:1000;">
+            <strong style="display:block; margin-bottom:8px;">Export Options</strong>
+            <label style="display:block; font-size:12px; margin-bottom:4px;">Decimal Separator:</label>
+            <div style="font-size:12px; margin-bottom:8px;">
+                <label><input type="radio" name="dec_sep" value="dot" checked> Dot (.) & comma CSV</label><br>
+                <label><input type="radio" name="dec_sep" value="comma"> Comma (,) & semicolon CSV</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+                <label for="export_filename">File name:</label>
+                <input id="export_filename" type="text" value="measurement_data" style="width:100%; box-sizing:border-box;">
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button type="button" id="export_cancel_btn" style="background:#555;">Cancel</button>
+                <button type="button" id="export_save_btn">Save</button>
+            </div>
+        </div>
         <a href="{{ url_for('main.logout') }}" style="color: white; text-align: center; margin-top: 20px; display: block;">Logout</a>
     </div>
     <div class="main-content">
         <div id="graph" class="graph-container"></div>
+        <div id="testbed_grid" class="testbed-grid" style="display:none;"></div>
     </div>
 
     <script>
@@ -186,8 +263,10 @@
         const exportCsvButton = document.getElementById('export_csv_button');
         const measureModeSelect = document.getElementById('measure_mode');
         const graphDiv = document.getElementById('graph');
+        const testbedGrid = document.getElementById('testbed_grid');
         let currentChartData = null;
         let isContinuousRunning = false; // Track state for continuous modes
+        let currentProgress = 0; // Track progress for non-continuous modes
         let continuousDataInterval = null; // Interval for polling continuous data
         let continuousDataBuffer = {
             timestamps: [],
@@ -227,6 +306,254 @@
 
         let uploadedModelData = null; // Store uploaded model data
 
+        // Testbed applets and runtime config
+        let testbedApplets = [];
+        let selectedAppletId = null;
+        let testbedConfig = {
+            target_voltage: 0,
+            current_limit: 0.1,
+            continuous_monitoring: true,
+            update_interval_ms: 100,
+            da: [ {mode:'analog', value:0}, {mode:'analog', value:0}, {mode:'analog', value:0}, {mode:'analog', value:0} ],
+            db: [ {mode:'digital', value:0}, {mode:'digital', value:0}, {mode:'digital', value:0}, {mode:'digital', value:0} ]
+        };
+
+        function renderTestbedGrid() {
+            testbedGrid.innerHTML = '';
+            testbedApplets.forEach(ap => {
+                const el = document.createElement('div');
+                el.className = 'applet-card';
+                el.dataset.appletId = ap.id;
+                if (selectedAppletId === ap.id) el.classList.add('selected');
+
+                const header = document.createElement('div');
+                header.className = 'applet-header';
+                header.textContent = `${ap.type.toUpperCase()} - ${ap.bind}`;
+                el.appendChild(header);
+
+                const body = document.createElement('div');
+                body.className = 'applet-body';
+
+                if (ap.type === 'gauge') {
+                    const val = document.createElement('div');
+                    val.className = 'applet-gauge-value';
+                    val.textContent = '-';
+                    body.appendChild(val);
+                    const bar = document.createElement('div');
+                    bar.className = 'applet-gauge-bar';
+                    const fill = document.createElement('div');
+                    fill.className = 'applet-gauge-fill';
+                    bar.appendChild(fill);
+                    body.appendChild(bar);
+                } else if (ap.type === 'graph') {
+                    const c = document.createElement('div');
+                    c.className = 'applet-graph-canvas';
+                    body.appendChild(c);
+                    ap._series = ap._series || [];
+                } else if (ap.type === 'slider') {
+                    const input = document.createElement('input');
+                    input.type = 'range';
+                    input.min = ap.min ?? 0;
+                    input.max = ap.max ?? (ap.sliderFor === 'current_limit' ? 3 : 20);
+                    input.step = ap.sliderFor === 'current_limit' ? 0.01 : 0.1;
+                    input.value = ap.sliderFor === 'current_limit' ? testbedConfig.current_limit : testbedConfig.target_voltage;
+                    const readout = document.createElement('div');
+                    readout.className = 'applet-slider-readout';
+                    readout.textContent = input.value;
+                    input.addEventListener('input', () => { readout.textContent = input.value; });
+                    input.addEventListener('change', () => {
+                        if (ap.sliderFor === 'current_limit') {
+                            testbedConfig.current_limit = parseFloat(input.value);
+                            sendTestbedSettings({ current_limit: testbedConfig.current_limit });
+                            const cl = document.getElementById('testbed_current_limit'); if (cl) cl.value = testbedConfig.current_limit;
+                        } else {
+                            testbedConfig.target_voltage = parseFloat(input.value);
+                            sendTestbedSettings({ target_voltage: testbedConfig.target_voltage });
+                            const tv = document.getElementById('testbed_target_voltage'); if (tv) tv.value = testbedConfig.target_voltage;
+                        }
+                    });
+                    body.appendChild(input);
+                    body.appendChild(readout);
+                } else if (ap.type === 'button') {
+                    const b = document.createElement('button');
+                    b.className = 'applet-action-button';
+                    b.textContent = `${ap.bus?.toUpperCase() || 'DB'}${ap.pin ?? 0}`;
+                    b.addEventListener('click', async () => {
+                        if (ap.buttonMode === 'click') {
+                            await setDigital(ap.bus, ap.pin, 3.3);
+                            setTimeout(() => setDigital(ap.bus, ap.pin, 0), 200);
+                        } else {
+                            const cur = getPinValue(ap.bus, ap.pin) > 1.65 ? 3.3 : 0;
+                            const next = cur > 0 ? 0 : 3.3;
+                            await setDigital(ap.bus, ap.pin, next);
+                            updateButtonColor(b, next);
+                        }
+                    });
+                    updateButtonColor(b, getPinValue(ap.bus, ap.pin));
+                    body.appendChild(b);
+                } else if (ap.type === 'status') {
+                    const s = document.createElement('div');
+                    s.className = 'status-light';
+                    s.textContent = `${ap.bus?.toUpperCase() || 'DB'}${ap.pin ?? 0}`;
+                    body.appendChild(s);
+                }
+
+                el.appendChild(body);
+                el.addEventListener('click', () => selectApplet(ap.id));
+                testbedGrid.appendChild(el);
+            });
+        }
+
+        function updateButtonColor(btn, value) {
+            if (!btn) return;
+            btn.classList.toggle('on', value > 1.65);
+        }
+        function getBusArray(bus) { return bus === 'da' ? testbedConfig.da : testbedConfig.db; }
+        function getPinValue(bus, pin) { const a = getBusArray(bus); return (a[pin]?.value) || 0; }
+        async function setDigital(bus, pin, value) {
+            const arr = getBusArray(bus);
+            arr[pin] = { mode: 'digital', value: value };
+            const patch = {}; patch[bus] = arr; await sendTestbedSettings(patch);
+        }
+        function selectApplet(id) {
+            selectedAppletId = id; renderTestbedGrid();
+            const ap = testbedApplets.find(a => a.id === id); if (!ap) return;
+            document.getElementById('tb_props_none').style.display = 'none';
+            document.getElementById('tb_props_panel').style.display = 'block';
+            document.getElementById('tb_prop_type').textContent = ap.type;
+            const bindSel = document.getElementById('tb_prop_bind'); bindSel.value = ap.bind;
+            document.getElementById('tb_prop_minmax').style.display = (ap.type === 'gauge' || ap.type === 'slider') ? 'block' : 'none';
+            document.getElementById('tb_prop_timewin').style.display = (ap.type === 'graph') ? 'block' : 'none';
+            document.getElementById('tb_prop_slider_target').style.display = (ap.type === 'slider') ? 'block' : 'none';
+            document.getElementById('tb_prop_button_opts').style.display = (ap.type === 'button' || ap.type === 'status') ? 'block' : 'none';
+            const pmn = document.getElementById('tb_prop_min'); if (pmn) pmn.value = ap.min ?? '';
+            const pmx = document.getElementById('tb_prop_max'); if (pmx) pmx.value = ap.max ?? '';
+            const pt = document.getElementById('tb_prop_time'); if (pt) pt.value = ap.timeWindow ?? 10;
+            const ps = document.getElementById('tb_prop_slider_for'); if (ps) ps.value = ap.sliderFor ?? 'target_voltage';
+            const pbus = document.getElementById('tb_prop_bus'); if (pbus) pbus.value = ap.bus ?? 'db';
+            const ppin = document.getElementById('tb_prop_pin'); if (ppin) ppin.value = ap.pin ?? 0;
+            const pbm = document.getElementById('tb_prop_button_mode'); if (pbm) pbm.value = ap.buttonMode ?? 'toggle';
+        }
+        ;['tb_prop_bind','tb_prop_min','tb_prop_max','tb_prop_time','tb_prop_slider_for','tb_prop_bus','tb_prop_pin','tb_prop_button_mode']
+          .forEach(id => { const el = document.getElementById(id); if (!el) return; el.addEventListener('change', () => {
+              const ap = testbedApplets.find(a => a.id === selectedAppletId); if (!ap) return;
+              if (id==='tb_prop_bind') ap.bind = el.value;
+              if (id==='tb_prop_min') ap.min = parseFloat(el.value);
+              if (id==='tb_prop_max') ap.max = parseFloat(el.value);
+              if (id==='tb_prop_time') ap.timeWindow = parseFloat(el.value);
+              if (id==='tb_prop_slider_for') ap.sliderFor = el.value;
+              if (id==='tb_prop_bus') ap.bus = el.value;
+              if (id==='tb_prop_pin') ap.pin = parseInt(el.value);
+              if (id==='tb_prop_button_mode') ap.buttonMode = el.value;
+              renderTestbedGrid();
+          });});
+
+        function initTestbedGrid() {
+            if (testbedApplets.length > 0) { testbedGrid.style.display = 'grid'; graphDiv.style.display = 'none'; renderTestbedGrid(); return; }
+            testbedApplets = [
+                { id: 'g_v', type: 'gauge', bind: 'output_voltage', min: 0, max: 20 },
+                { id: 'g_c', type: 'gauge', bind: 'output_current', min: 0, max: 3 },
+                { id: 'gr_v', type: 'graph', bind: 'output_voltage', timeWindow: 10 },
+                { id: 's_tv', type: 'slider', bind: 'target_voltage', sliderFor: 'target_voltage', min: 0, max: 20 },
+                { id: 's_cl', type: 'slider', bind: 'current_limit', sliderFor: 'current_limit', min: 0, max: 3 },
+                { id: 'b_db0', type: 'button', bind: 'db0', bus: 'db', pin: 0, buttonMode: 'toggle' },
+                { id: 'b_db1', type: 'button', bind: 'db1', bus: 'db', pin: 1, buttonMode: 'toggle' },
+                { id: 'b_db2', type: 'button', bind: 'db2', bus: 'db', pin: 2, buttonMode: 'toggle' },
+                { id: 'b_db3', type: 'button', bind: 'db3', bus: 'db', pin: 3, buttonMode: 'toggle' },
+                { id: 'st_da0', type: 'status', bind: 'da0', bus: 'da', pin: 0 },
+                { id: 'st_da1', type: 'status', bind: 'da1', bus: 'da', pin: 1 },
+                { id: 'st_da2', type: 'status', bind: 'da2', bus: 'da', pin: 2 },
+                { id: 'st_da3', type: 'status', bind: 'da3', bus: 'da', pin: 3 }
+            ];
+            selectedAppletId = null;
+            testbedGrid.style.display = 'grid';
+            graphDiv.style.display = 'none';
+            renderTestbedGrid();
+        }
+        function teardownTestbedGrid() {
+            testbedGrid.style.display = 'none';
+            graphDiv.style.display = 'block';
+        }
+        async function sendTestbedSettings(patch) {
+            testbedConfig = { ...testbedConfig, ...patch };
+            const settings = {
+                target_voltage: testbedConfig.target_voltage,
+                current_limit: testbedConfig.current_limit,
+                continuous_monitoring: true,
+                update_interval_ms: testbedConfig.update_interval_ms,
+                da: testbedConfig.da,
+                db: testbedConfig.db
+            };
+            const fd = new FormData();
+            fd.append('measure_mode', 'testbed');
+            fd.append('target_board', targetBoardSelect.value);
+            fd.append('no_flush', '1');
+            fd.append('testbed_settings_json', JSON.stringify(settings));
+            try { await fetch("{{ url_for('main.measure') }}", { method: 'POST', body: fd }); } catch(e) { console.error('Failed to send testbed settings', e); }
+        }
+
+        function updateTestbedApplets(data) {
+            const r = data.readings || {};
+            const daVals = r.da || [0,0,0,0];
+            const dbVals = r.db || [0,0,0,0];
+            testbedApplets.forEach(ap => {
+                const el = testbedGrid.querySelector(`[data-applet-id="${ap.id}"]`);
+                if (!el) return;
+                const body = el.querySelector('.applet-body');
+                if (ap.type === 'gauge') {
+                    const valEl = body.querySelector('.applet-gauge-value');
+                    const fill = body.querySelector('.applet-gauge-fill');
+                    const value = readBinding(ap.bind, r, daVals, dbVals);
+                    if (value != null && valEl && fill) {
+                        valEl.textContent = value.toFixed(3);
+                        const min = (ap.min ?? 0);
+                        const max = (ap.max ?? 20);
+                        const pct = Math.max(0, Math.min(1, (value - min) / (max - min || 1)));
+                        fill.style.width = (pct * 100) + '%';
+                    }
+                } else if (ap.type === 'graph') {
+                    const canvas = body.querySelector('.applet-graph-canvas');
+                    const value = readBinding(ap.bind, r, daVals, dbVals);
+                    const now = Date.now() / 1000;
+                    ap._series = ap._series || [];
+                    if (value != null) ap._series.push({ t: now, v: value });
+                    const win = ap.timeWindow ?? 10;
+                    ap._series = ap._series.filter(p => p.t >= now - win);
+                    drawSparkline(canvas, ap._series, ap.min ?? 0, ap.max ?? (ap.bind.includes('current') ? 3 : 20));
+                } else if (ap.type === 'button') {
+                    const btn = body.querySelector('button');
+                    const value = (ap.bus === 'da' ? daVals[ap.pin] : dbVals[ap.pin]) || 0;
+                    updateButtonColor(btn, value);
+                } else if (ap.type === 'status') {
+                    const s = body.querySelector('.status-light');
+                    const value = (ap.bus === 'da' ? daVals[ap.pin] : dbVals[ap.pin]) || 0;
+                    if (s) s.classList.toggle('on', value > 1.65);
+                }
+            });
+        }
+        function readBinding(bind, r, daVals, dbVals) {
+            if (bind === 'output_voltage') return r.output_voltage;
+            if (bind === 'output_current') return r.output_current;
+            if (bind === 'input_ch0') return r.input_ch0;
+            if (bind === 'input_ch1') return r.input_ch1;
+            if (bind && bind.startsWith('da')) return daVals[parseInt(bind.slice(2))] || 0;
+            if (bind && bind.startsWith('db')) return dbVals[parseInt(bind.slice(2))] || 0;
+            return null;
+        }
+        function drawSparkline(container, series, min, max) {
+            if (!container) return;
+            const w = container.clientWidth || 180;
+            const h = container.clientHeight || 80;
+            const xmin = series.length ? series[0].t : 0;
+            const xmax = series.length ? series[series.length - 1].t : 1;
+            const pts = series.map(p => {
+                const x = (w * (p.t - xmin)) / ((xmax - xmin) || 1);
+                const y = h - (h * (p.v - min)) / ((max - min) || 1);
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+            container.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#007bff" stroke-width="2" points="${pts}" /></svg>`;
+        }
+
         function updateMeasureButtonText() {
             const selectedMode = measureModeSelect.value;
             const csModeValue = csModeSelect ? csModeSelect.value : null;
@@ -241,14 +568,9 @@
                     } else {
                         measureButton.textContent = 'Stop System';
                     }
-                } else if (selectedMode === 'va') {
-                    measureButton.textContent = 'Stop VA';
-                } else if (selectedMode === 'bode') {
-                    measureButton.textContent = 'Stop Bode';
-                } else if (selectedMode === 'step') {
-                    measureButton.textContent = 'Stop Step';
-                } else if (selectedMode === 'impulse') {
-                    measureButton.textContent = 'Stop Impulse';
+                } else if (['va','bode','step','impulse'].includes(selectedMode)) {
+                    // Show progress bar behavior on the button for non-continuous modes
+                    setButtonProgress(currentProgress);
                 } else {
                     measureButton.textContent = 'Stop';
                 }
@@ -264,10 +586,23 @@
                     }
                 } else if (['va', 'bode', 'step', 'impulse'].includes(selectedMode)) {
                     measureButton.textContent = 'Start ' + selectedMode.toUpperCase();
+                    resetButtonProgress();
                 } else {
                     measureButton.textContent = 'Measure';
                 }
             }
+        }
+
+        function setButtonProgress(progressPct) {
+            const pct = Math.max(0, Math.min(100, progressPct || 0));
+            measureButton.textContent = `Stop ${measureModeSelect.value.toUpperCase()} — ${pct.toFixed(1)}%`;
+            measureButton.style.position = 'relative';
+            measureButton.style.backgroundImage = `linear-gradient(90deg, rgba(0,123,255,0.35) ${pct}%, transparent ${pct}%)`;
+            measureButton.style.transition = 'background-image 0.2s ease';
+        }
+        function resetButtonProgress() {
+            currentProgress = 0;
+            measureButton.style.backgroundImage = '';
         }
 
         function startContinuousDataPolling(boardId, mode) {
@@ -340,11 +675,15 @@
                             document.getElementById('tb_out_c').textContent = data.readings.output_current !== undefined ? data.readings.output_current.toFixed(4) : '-';
                             document.getElementById('tb_in_ch0').textContent = data.readings.input_ch0 !== undefined ? data.readings.input_ch0.toFixed(3) : '-';
                             document.getElementById('tb_in_ch1').textContent = data.readings.input_ch1 !== undefined ? data.readings.input_ch1.toFixed(3) : '-';
+                            // Update the grid applets
+                            updateTestbedApplets(data);
                         }
                     } else if (mode === 'va') {
                         // Handle VA measurement data (accumulated data points)
                         if (data && data.mode === 'va' && data.data && data.data.length > 0) {
                             console.log(`[DEBUG] Processing VA data: ${data.data.length} points, ${data.progress}% complete`);
+                            currentProgress = data.progress || 0;
+                            setButtonProgress(currentProgress);
                             // Update the VA plot
                             const plot = {
                                 x: data.data.map(p => p.voltage),
@@ -365,6 +704,7 @@
                                 console.log('[DEBUG] VA measurement completed');
                                 stopContinuousDataPolling();
                                 isContinuousRunning = false;
+                                resetButtonProgress();
                                 updateMeasureButtonText();
                                 layout.title = 'VA Characteristics - Complete';
                                 Plotly.newPlot(graphDiv, [plot], layout);
@@ -374,6 +714,8 @@
                         // Handle other measurement modes similarly to VA
                         if (data && data.mode === mode && data.data && data.data.length > 0) {
                             console.log(`[DEBUG] Processing ${mode} data: ${data.data.length} points, ${data.progress}% complete`);
+                            currentProgress = data.progress || 0;
+                            setButtonProgress(currentProgress);
                             
                             let plot, layout;
                             if (mode === 'bode') {
@@ -422,6 +764,7 @@
                                 console.log(`[DEBUG] ${mode} measurement completed`);
                                 stopContinuousDataPolling();
                                 isContinuousRunning = false;
+                                resetButtonProgress();
                                 updateMeasureButtonText();
                                 layout.title = layout.title.replace(/- \d+.*% Complete/, '- Complete');
                                 Plotly.newPlot(graphDiv, plot, layout);
@@ -521,13 +864,19 @@
                     if (data && data.data && data.data.length > 0) {
                         console.log(`[DEBUG] Received ${mode} measurement data: ${data.data.length} points, ${data.progress}% complete`);
                         
-                        // Plot the accumulated data
-                        plotData([data], mode);
+                        currentProgress = data.progress || 0;
+                        setButtonProgress(currentProgress);
+                        // Update export dataset and enable button when points arrive
+                        currentChartData = data.data;
+                        exportCsvButton.disabled = false;
+                        // Plot the accumulated data - pass data.data (the array of points), not [data]
+                        plotData(data.data, mode);
                         
                         // Check if measurement is complete
                         if (data.completed) {
                             console.log(`[DEBUG] ${mode} measurement completed`);
                             isContinuousRunning = false;
+                            resetButtonProgress();
                             updateMeasureButtonText();
                             stopMeasurementDataPolling();
                         }
@@ -592,21 +941,13 @@
 
             // VA specific logic for CC/CV
             if (selectedMode === 'va') {
-                const selectedChannel = vaChannelSelect.value;
-                if (selectedChannel === 'CH2') {
-                    vaModeTypeSelect.disabled = false;
-                    if (vaModeTypeSelect.value === 'CV') {
-                        vaCvSettingsDiv.style.display = 'block';
-                        vaCcSettingsDiv.style.display = 'none';
-                    } else { // CC
-                        vaCvSettingsDiv.style.display = 'none';
-                        vaCcSettingsDiv.style.display = 'block';
-                    }
-                } else { // CH0 or CH1
-                    vaModeTypeSelect.value = 'CV'; // Force CV
-                    vaModeTypeSelect.disabled = true;
+                // Allow CV/CC for all channels; toggle sub-settings based on mode
+                if (vaModeTypeSelect.value === 'CV') {
                     vaCvSettingsDiv.style.display = 'block';
                     vaCcSettingsDiv.style.display = 'none';
+                } else {
+                    vaCvSettingsDiv.style.display = 'none';
+                    vaCcSettingsDiv.style.display = 'block';
                 }
             }
             // Control System specific logic for sub-settings
@@ -639,6 +980,12 @@
                     document.getElementById('cs_status_text').textContent = 'No model uploaded';
                     document.getElementById('cs_model_name_text').textContent = '-';
                 }
+            }
+            // Switch graph/grid for testbed
+            if (selectedMode === 'testbed') {
+                initTestbedGrid();
+            } else {
+                teardownTestbedGrid();
             }
             
             // Update measure button text based on selected mode
@@ -787,11 +1134,8 @@
                             }
                         }
                         
-                        // Clear the graph
-                        Plotly.newPlot(graphDiv, [], {
-                            margin: { t: 30, b: 50, l: 60, r: 30 },
-                            title: `${mode.toUpperCase()} - Stopped`
-                        });
+                        // Keep graph data visible when stopped for review
+                        console.log('[DEBUG] Measurement stopped, keeping graph data visible');
                         
                         console.log('Stopped:', data.message);
                     } else {
@@ -811,7 +1155,7 @@
 
             // Collect data from the active settings group
             const activeSettingsGroup = document.querySelector('.settings-group.active');
-            if (activeSettingsGroup) {
+            if (activeSettingsGroup && mode !== 'testbed') {
                 const inputs = activeSettingsGroup.querySelectorAll('input[type="number"], input[type="text"], select'); // query for specific input types
                 inputs.forEach(input => {
                     if (!input.disabled && input.name) { // only include enabled inputs with a name
@@ -850,13 +1194,25 @@
                     }
                 }
 
-                 // Special handling for VA CH0/CH1 to ensure va_mode_type is CV
+                // Include shunt resistance in VA settings
                 if (mode === 'va') {
-                    const channel = document.getElementById('va_channel').value;
-                    if (channel === 'CH0' || channel === 'CH1') {
-                        formData.set('va_mode_type', 'CV'); // Ensure CV is sent
-                    }
+                    const shunt = document.getElementById('va_shunt_resistance').value;
+                    formData.set('va_shunt_resistance', shunt);
                 }
+            } else if (mode === 'testbed') {
+                // Build MQTT-compliant testbed settings from current config
+                testbedConfig.target_voltage = parseFloat(document.getElementById('testbed_target_voltage').value);
+                testbedConfig.current_limit = parseFloat(document.getElementById('testbed_current_limit').value);
+                const settings = {
+                    mode: 'testbed',
+                    target_voltage: testbedConfig.target_voltage,
+                    current_limit: testbedConfig.current_limit,
+                    continuous_monitoring: true,
+                    update_interval_ms: testbedConfig.update_interval_ms,
+                    da: testbedConfig.da,
+                    db: testbedConfig.db
+                };
+                formData.append('testbed_settings_json', JSON.stringify(settings));
             }
 
             // Clear the graph before starting new measurement
@@ -864,6 +1220,21 @@
                 margin: { t: 30, b: 50, l: 60, r: 30 },
                 title: `${mode.toUpperCase()} - Starting...`
             });
+
+            // Ensure testbed uses JSON settings per spec
+            if (mode === 'testbed') {
+                testbedConfig.target_voltage = parseFloat(document.getElementById('testbed_target_voltage').value);
+                testbedConfig.current_limit = parseFloat(document.getElementById('testbed_current_limit').value);
+                const tbSettings = {
+                    target_voltage: testbedConfig.target_voltage,
+                    current_limit: testbedConfig.current_limit,
+                    continuous_monitoring: true,
+                    update_interval_ms: testbedConfig.update_interval_ms,
+                    da: testbedConfig.da,
+                    db: testbedConfig.db
+                };
+                formData.append('testbed_settings_json', JSON.stringify(tbSettings));
+            }
 
             try {
                 const response = await fetch("{{ url_for('main.measure') }}", {
@@ -873,9 +1244,9 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    currentChartData = data; // Store data for export
+                    // Start response may be a status object; actual points arrive via polling
                     plotData(data, mode);
-                    exportCsvButton.disabled = !data || (Array.isArray(data) && data.length === 0) || (typeof data === 'object' && Object.keys(data).length === 0);
+                    // Enable export only when real data points arrive (handled in polling)
                     
                     // Update state for continuous modes
                     if (isContinuousMode) {
@@ -908,34 +1279,97 @@
 
         exportCsvButton.addEventListener('click', async () => {
             if (!currentChartData || currentChartData.length === 0) {
-                alert("No data to export.");
+                alert('No data to export.');
                 return;
             }
-            try {
-                const response = await fetch("{{ url_for('main.export_csv') }}", {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ data: currentChartData })
-                });
+            const dialog = document.getElementById('export_dialog');
+            dialog.style.display = 'block';
+        });
 
-                if (response.ok) {
-                    const blob = await response.blob();
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = 'measurement_data.csv';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                } else {
-                    const error = await response.json();
-                    alert("Error exporting CSV: " + (error.error || "Unknown error"));
-                }
-            } catch (error) {
-                console.error("Export error:", error);
-                alert("Failed to export CSV.");
+        document.getElementById('export_cancel_btn').addEventListener('click', () => {
+            document.getElementById('export_dialog').style.display = 'none';
+        });
+
+        document.getElementById('export_save_btn').addEventListener('click', async () => {
+            const dialog = document.getElementById('export_dialog');
+            const decSep = document.querySelector('input[name="dec_sep"]:checked').value; // 'dot' or 'comma'
+            let filename = document.getElementById('export_filename').value.trim();
+            if (!filename) filename = 'measurement_data';
+            filename += '.csv';
+
+            // Build CSV client-side for better formatting
+            const decimalChar = decSep === 'comma' ? ',' : '.';
+            const delimiter = decSep === 'comma' ? ';' : ',';
+
+            function formatNumber(n) {
+                if (typeof n !== 'number') return n === null || n === undefined ? '' : String(n);
+                let s = n.toFixed(12).replace(/0+$/,'').replace(/\.$/,'');
+                if (s === '' || s === '-') s = '0';
+                if (decimalChar !== '.') s = s.replace('.', decimalChar);
+                return s;
             }
+            function isNumericField(val) {
+                return typeof val === 'number';
+            }
+            let rows = [];
+            if (Array.isArray(currentChartData) && currentChartData.length > 0) {
+                const headers = Object.keys(currentChartData[0]);
+                rows.push(headers.join(delimiter));
+                currentChartData.forEach(obj => {
+                    const row = headers.map(h => {
+                        const v = obj[h];
+                        const fv = isNumericField(v) ? formatNumber(v) : (v === null || v === undefined ? '' : String(v));
+                        // Wrap if contains delimiter or newline
+                        if (/["\n]/.test(fv) || fv.includes(delimiter)) {
+                            return '"' + fv.replace(/"/g,'""') + '"';
+                        }
+                        return fv;
+                    }).join(delimiter);
+                    rows.push(row);
+                });
+            } else if (currentChartData && typeof currentChartData === 'object') {
+                const headers = Object.keys(currentChartData);
+                rows.push(headers.join(delimiter));
+                const row = headers.map(h => {
+                    const v = currentChartData[h];
+                    const fv = isNumericField(v) ? formatNumber(v) : (v === null || v === undefined ? '' : String(v));
+                    if (/["\n]/.test(fv) || fv.includes(delimiter)) {
+                        return '"' + fv.replace(/"/g,'""') + '"';
+                    }
+                    return fv;
+                }).join(delimiter);
+                rows.push(row);
+            } else {
+                alert('Unsupported data format for export.');
+                return;
+            }
+
+            const csvBlob = new Blob([rows.join('\n')], { type: 'text/csv' });
+
+            // Attempt File System Access API first
+            if (window.showSaveFilePicker) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: filename,
+                        types: [{ description: 'CSV file', accept: { 'text/csv': ['.csv'] } }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(csvBlob);
+                    await writable.close();
+                    dialog.style.display = 'none';
+                    return;
+                } catch (e) {
+                    console.warn('showSaveFilePicker failed, falling back', e);
+                }
+            }
+            // Fallback to classic download
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(csvBlob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            dialog.style.display = 'none';
         });
 
         function plotData(data, mode) {
@@ -1026,14 +1460,13 @@
                 layout.title = mode === 'step' ? 'Step Response' : 'Impulse Response';
                 Plotly.newPlot(graphDiv, [plot], layout);
             } else if (mode === 'testbed') {
-                // For testbed, we update spans, not a graph primarily
+                // For testbed, show the grid and update sidebar readings
                 document.getElementById('tb_out_v').textContent = data.output_voltage !== undefined ? data.output_voltage.toFixed(3) : '-';
                 document.getElementById('tb_out_c').textContent = data.output_current !== undefined ? data.output_current.toFixed(4) : '-';
                 document.getElementById('tb_in_ch0').textContent = data.input_ch0 !== undefined ? data.input_ch0.toFixed(3) : '-';
                 document.getElementById('tb_in_ch1').textContent = data.input_ch1 !== undefined ? data.input_ch1.toFixed(3) : '-';
-                layout.title = 'Testbed - Live Readings';
-                // Optionally, could plot one of these values over time if desired, but for now, just text.
-                Plotly.newPlot(graphDiv, [], layout); // Keep graph area clean or show a relevant message
+                initTestbedGrid();
+                Plotly.purge(graphDiv);
             } else if (mode === 'control_system') {
                 if (data.type === "pid_response" && data.data) {
                     plot = {

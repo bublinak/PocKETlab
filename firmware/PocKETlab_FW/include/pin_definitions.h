@@ -6,19 +6,20 @@
 // GPIO0 is often used for boot mode.
 constexpr int PIN_BOOT_BUTTON = 0; // GPIO0, BOOT (Sheet 3, U3 Pin 5)
 
-// --- Analog Feedback & Digital I/O (via AGPIO nets on Sheet 1, from ESP32 Sheet 3) ---
+// --- Analog Feedback & DA/DB General-Purpose I/O (via AGPIO nets on Sheet 1, from ESP32 Sheet 3) ---
 // These AGPIOx nets connect to various parts of the system.
-// AGPIO0-4 seem to be feedback/control for DAC outputs or similar.
-// AGPIO5-8 are general Digital I/O, possibly for ADC block or general use.
+// AGPIO0-4 are analog feedback/control lines.
+// AGPIO5-8 are general-purpose lines directly on the MCU capable of digital I/O and analog input.
 constexpr int PIN_FB_AO = 1;       // GPIO1 -> AGPIO0 -> FB_AO (Sheet 1) - FEEDBACK from DAC0
 constexpr int PIN_FB_A1 = 2;       // GPIO2 -> AGPIO1 -> FB_A1 (Sheet 1) - FEEDBACK from DAC1
 constexpr int PIN_FB_GOUT = 3;     // GPIO3 -> AGPIO2 -> FB_GOUT (Sheet 1) - FEEDBACK from floating ground (current limiter voltage)
 constexpr int PIN_FB_IOUT = 4;     // GPIO4 -> AGPIO3 -> FB_IOUT (Sheet 1) - FEEDBACK from current limiter
 constexpr int PIN_FB_VOUT = 5;     // GPIO5 -> AGPIO4 -> FB_VOUT (Sheet 1) - FEEDBACK from voltage output
-constexpr int PIN_DIO0_ADC = 6;    // GPIO6 -> AGPIO5 -> DIO (Sheet 1, to ADC block) - Digital I/O 0
-constexpr int PIN_DIO1_ADC = 7;    // GPIO7 -> AGPIO6 -> DI1 (Sheet 1, to ADC block) - Digital I/O 1
-constexpr int PIN_DIO2_ADC = 8;    // GPIO8 -> AGPIO7 -> DI2 (Sheet 1, to ADC block) - Digital I/O 2
-constexpr int PIN_DIO3_ADC = 9;    // GPIO9 -> AGPIO8 -> DI3 (Sheet 1, to ADC block) - Digital I/O 3
+// Renamed: DAx (Digital/Analog capable) channels (MCU pins; digital I/O + analog input, no analog output)
+constexpr int PIN_DA0 = 6;    // GPIO6  -> AGPIO5 -> DA0 (was PIN_DIO0_ADC)
+constexpr int PIN_DA1 = 7;    // GPIO7  -> AGPIO6 -> DA1 (was PIN_DIO1_ADC)
+constexpr int PIN_DA2 = 8;    // GPIO8  -> AGPIO7 -> DA2 (was PIN_DIO2_ADC)
+constexpr int PIN_DA3 = 9;    // GPIO9  -> AGPIO8 -> DA3 (was PIN_DIO3_ADC)
 
 // --- Temperature Sensor ---
 constexpr int PIN_TEMP_PROBE = 10; // GPIO10 -> AGPIO9 -> TEMP_PROBE (Sheet 1, J1 NTC)
@@ -61,26 +62,26 @@ constexpr int PIN_UART_TXD0 = 43; // GPIO43 (U0TXD) (Sheet 3, U3 Pin 49)
 constexpr int PIN_UART_RXD0 = 44; // GPIO44 (U0RXD) (Sheet 3, U3 Pin 50)
 
 
-// --- ESP32 Input Pins (GPIO33-GPIO37) Monitoring Other Signals ---
+// --- DB lines (GPIO33-GPIO37) monitoring DAC/Power block signals ---
 // These GPIOs on the ESP32 (Sheet 3) are connected to nets (GPIO33-GPIO37)
 // which on Sheet 1 are driven by outputs from the DAC and ADC blocks.
 // This suggests they might be for monitoring/debugging those signals.
 
 // GPIO33 (Sheet 3, U3 Pin 38) <- net GPIO33 <- DO0 from DAC block (Sheet 1)
 // DO0 from DAC block (Sheet 4 hierarchical pin) is SCK of DACs.
-constexpr int PIN_DIO0_DAC = 33;
+constexpr int PIN_DB0 = 33;   // was PIN_DIO0_DAC
 
 // GPIO34 (Sheet 3, U3 Pin 39) <- net GPIO34 <- DO1 from DAC block (Sheet 1)
 // DO1 from DAC block (Sheet 4 hierarchical pin) is LDAC of DACs.
-constexpr int PIN_DIO1_DAC = 34;
+constexpr int PIN_DB1 = 34;   // was PIN_DIO1_DAC
 
 // GPIO35 (Sheet 3, U3 Pin 40) <- net GPIO35 <- DO2 from DAC block (Sheet 1)
 // DO2 from DAC block (Sheet 4 hierarchical pin) is SDI (MOSI) of DACs.
-constexpr int PIN_DIO2_DAC = 35;
+constexpr int PIN_DB2 = 35;   // was PIN_DIO2_DAC
 
 // GPIO36 (Sheet 3, U3 Pin 41) <- net GPIO36 <- DO3 from DAC block (Sheet 1)
 // DO3 from DAC block (Sheet 4 hierarchical pin) is CS_POW (CS for U6 Power DAC).
-constexpr int PIN_DIO3_DAC = 36;
+constexpr int PIN_DB3 = 36;   // was PIN_DIO3_DAC
 
 // GPIO37 (Sheet 3, U3 Pin 42) <- net PRIM_SP <- SPL from Power block (Sheet 1)
 constexpr int PIN_PD_SPL = 37;

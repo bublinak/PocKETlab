@@ -1,8 +1,11 @@
 #include "driver_control.h"
 #include <Arduino.h>
+#include <math.h>
 
 // Basic constructor
-DriverControl::DriverControl(PostmanMQTT& postman, PocKETlabIO& io) : _postman(postman), _io(io), _testbed_running(false), _control_system_running(false), _va_running(false) {
+DriverControl::DriverControl(PostmanMQTT& postman, PocKETlabIO& io) : _postman(postman), _io(io), 
+    _testbed_running(false), _control_system_running(false), _va_running(false),
+    _bode_running(false), _step_running(false), _impulse_running(false) {
     // Initialize hardware or other setup
     Serial.println("DriverControl initialized.");
     
@@ -32,8 +35,22 @@ DriverControl::DriverControl(PostmanMQTT& postman, PocKETlabIO& io) : _postman(p
     _va_buffer_count = 0;
     _va_last_data_send = 0;
     
+    // Initialize Bode measurement
+    _bode_buffer_count = 0;
+    _bode_last_measurement = 0;
+    _bode_measurement_delay_ms = 50;  // 50ms between frequency measurements
+    
+    // Initialize Step measurement
+    _step_buffer_count = 0;
+    _step_last_measurement = 0;
+    
+    // Initialize Impulse measurement
+    _impulse_buffer_count = 0;
+    _impulse_last_measurement = 0;
+    
     // Initialize current mode tracking
     _current_mode = "none";
+    for (int i = 0; i < 4; ++i) { _testbed_da_value_v[i] = NAN; _testbed_db_value_v[i] = NAN; }
 }
 
 // Basic destructor
@@ -43,6 +60,15 @@ DriverControl::~DriverControl() {
     
     // Stop VA measurement if running
     stopVAMeasurement();
+    
+    // Stop Bode measurement if running
+    stopBodeMeasurement();
+    
+    // Stop Step measurement if running
+    stopStepMeasurement();
+    
+    // Stop Impulse measurement if running
+    stopImpulseMeasurement();
     
     // Clean up StateSpaceControl objects
     if (_simulation != nullptr) {
@@ -113,6 +139,28 @@ void DriverControl::loop() {
             readings["input_ch0"] = roundTo3Decimals(_io.readSignalVoltage(SIGNAL_CHANNEL_A));
             readings["input_ch1"] = roundTo3Decimals(_io.readSignalVoltage(SIGNAL_CHANNEL_B));
 
+            // DA/DB channels: publish voltages only (0 or 3.3 for digital; 0..3.3 for analog)
+            JsonArray daArr = readings["da"].to<JsonArray>();
+            for (uint8_t i = 0; i < 4; ++i) {
+                float v = _testbed_da_value_v[i];
+                if (isnan(v)) {
+                    // If not explicitly set, read analog voltage from pin
+                    v = _io.analogReadDA(i);
+                }
+                daArr.add(roundTo3Decimals(v));
+            }
+
+            JsonArray dbArr = readings["db"].to<JsonArray>();
+            for (uint8_t i = 0; i < 4; ++i) {
+                float v = _testbed_db_value_v[i];
+                if (isnan(v)) {
+                    // Fallback to digital read mapped to 0/3.3V
+                    int pin = (i==0?PIN_DB0:i==1?PIN_DB1:i==2?PIN_DB2:PIN_DB3);
+                    v = (digitalRead(pin) == HIGH) ? 3.3f : 0.0f;
+                }
+                dbArr.add(roundTo3Decimals(v));
+            }
+
             payload["status"] = "regulating"; // Placeholder
             payload["continuous"] = true;
 
@@ -120,10 +168,10 @@ void DriverControl::loop() {
         }
     }
     
-    // Handle buffered data sending for control system (every 100ms to match buffer fill rate)
+    // Handle buffered data sending for control system (every 200ms to match buffer fill rate)
     if (_control_system_running) {
-        // Buffer fills every 100ms at 100Hz with 20 samples (20 / 100Hz = 0.2s)
-        if (millis() - _last_data_send >= 100) {
+        // Buffer fills every 200ms at 100Hz with 20 samples (20 / 100Hz = 0.2s)
+        if (millis() - _last_data_send >= 200) {
             sendBufferedData();
             _last_data_send = millis();
         }
@@ -136,6 +184,24 @@ void DriverControl::loop() {
             _va_last_measurement = millis();
         }
     }
+    
+    // Handle Bode characteristics measurement
+    if (_bode_running) {
+        if (millis() - _bode_last_measurement >= _bode_measurement_delay_ms) {
+            performBodeMeasurement();
+            _bode_last_measurement = millis();
+        }
+    }
+    
+    // Handle Step response measurement
+    if (_step_running) {
+        performStepMeasurement();
+    }
+    
+    // Handle Impulse response measurement
+    if (_impulse_running) {
+        performImpulseMeasurement();
+    }
 }
 
 void DriverControl::handleVA(JsonObjectConst settings) {
@@ -144,29 +210,84 @@ void DriverControl::handleVA(JsonObjectConst settings) {
     // Stop any existing VA measurement
     stopVAMeasurement();
     
-    // Parse settings
-    String channel = settings["va_channel"].as<String>();
-    String mode_type = settings["va_mode_type"].as<String>();
+    // Parse settings - support both API spec format and legacy flat format
+    String channel;
+    String mode_type;
+    
+    // Try API spec format first (nested structure)
+    if (settings["channel"].is<const char*>()) {
+        channel = settings["channel"].as<String>();
+    } else if (settings["va_channel"].is<const char*>()) {
+        // Legacy flat format
+        channel = settings["va_channel"].as<String>();
+    } else {
+        _postman.sendError("E001", "Missing channel parameter", "va", "channel", "", "Provide CH0, CH1, or CH2");
+        return;
+    }
+    
+    if (settings["mode_type"].is<const char*>()) {
+        mode_type = settings["mode_type"].as<String>();
+    } else if (settings["va_mode_type"].is<const char*>()) {
+        // Legacy flat format
+        mode_type = settings["va_mode_type"].as<String>();
+    } else {
+        _postman.sendError("E001", "Missing mode_type parameter", "va", "mode_type", "", "Provide CV or CC");
+        return;
+    }
     
     // Validate channel and mode combination
     if (!isValidVAChannel(channel, mode_type)) {
-        _postman.sendError("E007", "Channel conflict or invalid mode", "va", "va_channel/va_mode_type", 
-                          (channel + "/" + mode_type).c_str(), "CH0,CH1 support CV only; CH2 supports CV and CC");
+        _postman.sendError("E007", "Channel conflict or invalid mode", "va", "channel/mode_type", 
+                          (channel + "/" + mode_type).c_str(), "Valid channels: CH0, CH1, CH2; Valid modes: CV, CC");
         return;
     }
     
     // Configure measurement
     _va_config.channel = channel;
     _va_config.mode_type = mode_type;
-    _va_config.start_voltage = settings["va_start_voltage"].as<float>();
-    _va_config.end_voltage = settings["va_end_voltage"].as<float>();
-    _va_config.step_voltage = settings["va_step_voltage"].as<float>();
-    _va_config.start_current = settings["va_start_current"].as<float>();
-    _va_config.end_current = settings["va_end_current"].as<float>();
-    _va_config.step_current = settings["va_step_current"].as<float>();
     
-    // Validate parameters
+    // Parse shunt resistance (required for current calculation)
+    if (settings["shunt_resistance"].is<float>()) {
+        _va_config.shunt_resistance = settings["shunt_resistance"].as<float>();
+    } else {
+        _va_config.shunt_resistance = 1.0f;  // Default 1 Ohm if not specified
+    }
+    
+    // Validate shunt resistance
+    if (_va_config.shunt_resistance <= 0) {
+        _postman.sendError("E001", "Invalid shunt resistance", "va", "shunt_resistance", "", 
+                          "Shunt resistance must be > 0 Ohms");
+        return;
+    }
+    
+    // Initialize CC mode output voltage
+    _va_config.cc_output_voltage = 0.0f;
+    _va_config.output_voltage = 0.0f;  // Start from 0V output
+    _va_config.capped = false;
+    
+    // Set max output voltage based on channel
+    if (_va_config.channel == "CH0" || _va_config.channel == "CH1") {
+        _va_config.max_output_voltage = _io.getSignalVoltageRange();  // ~13.7V
+    } else {
+        _va_config.max_output_voltage = _io.getPowerVoltageRange();   // ~13.5V
+    }
+    
+    // Parse voltage/current settings - support both nested and flat formats
     if (mode_type == "CV") {
+        // Try nested cv_settings first (API spec format)
+        if (settings["cv_settings"].is<JsonObjectConst>()) {
+            JsonObjectConst cv = settings["cv_settings"].as<JsonObjectConst>();
+            _va_config.start_voltage = cv["start_voltage"].as<float>();
+            _va_config.end_voltage = cv["end_voltage"].as<float>();
+            _va_config.step_voltage = cv["step_voltage"].as<float>();
+        } else {
+            // Legacy flat format
+            _va_config.start_voltage = settings["va_start_voltage"].as<float>();
+            _va_config.end_voltage = settings["va_end_voltage"].as<float>();
+            _va_config.step_voltage = settings["va_step_voltage"].as<float>();
+        }
+        
+        // Validate CV parameters
         if (_va_config.start_voltage < 0 || _va_config.end_voltage > 20 || 
             _va_config.start_voltage >= _va_config.end_voltage || _va_config.step_voltage <= 0) {
             _postman.sendError("E001", "Voltage parameter out of range", "va", "voltage", "", 
@@ -175,7 +296,22 @@ void DriverControl::handleVA(JsonObjectConst settings) {
         }
         // Calculate total steps for CV mode
         _va_config.total_steps = (int)(((_va_config.end_voltage - _va_config.start_voltage) / _va_config.step_voltage) + 1);
+        
     } else if (mode_type == "CC") {
+        // Try nested cc_settings first (API spec format)
+        if (settings["cc_settings"].is<JsonObjectConst>()) {
+            JsonObjectConst cc = settings["cc_settings"].as<JsonObjectConst>();
+            _va_config.start_current = cc["start_current"].as<float>();
+            _va_config.end_current = cc["end_current"].as<float>();
+            _va_config.step_current = cc["step_current"].as<float>();
+        } else {
+            // Legacy flat format
+            _va_config.start_current = settings["va_start_current"].as<float>();
+            _va_config.end_current = settings["va_end_current"].as<float>();
+            _va_config.step_current = settings["va_step_current"].as<float>();
+        }
+        
+        // Validate CC parameters
         if (_va_config.start_current < 0 || _va_config.end_current > 3 || 
             _va_config.start_current >= _va_config.end_current || _va_config.step_current <= 0) {
             _postman.sendError("E001", "Current parameter out of range", "va", "current", "", 
@@ -205,52 +341,200 @@ void DriverControl::handleVA(JsonObjectConst settings) {
 
 void DriverControl::handleBode(JsonObjectConst settings) {
     Serial.println("Handling Bode Plot command");
-    _current_mode = "bode";  // Set current mode
-    _postman.sendResponse("bode", "success", "Bode measurement started");
+    
+    // Stop any existing Bode measurement
+    stopBodeMeasurement();
+    
+    _current_mode = "bode";
+    
+    // Parse settings according to API spec
+    String channel;
+    if (settings["channel"].is<const char*>()) {
+        channel = settings["channel"].as<String>();
+    } else {
+        _postman.sendError("E001", "Missing channel parameter", "bode", "channel", "", "Provide CH0, CH1, or CH2");
+        return;
+    }
+    
+    // Parse frequency range
+    JsonObjectConst freq_range = settings["frequency_range"].as<JsonObjectConst>();
+    if (freq_range.isNull()) {
+        _postman.sendError("E001", "Missing frequency_range parameter", "bode", "frequency_range", "", 
+                          "Provide from, to, and points_per_decade");
+        return;
+    }
+    
+    float freq_from = freq_range["from"].as<float>();
+    float freq_to = freq_range["to"].as<float>();
+    int points_per_decade = freq_range["points_per_decade"].as<int>();
+    float output_voltage = settings["output_voltage"].as<float>();
+    
+    // Validate parameters according to API spec constraints
+    if (freq_from < 1 || freq_to > 10000 || freq_from >= freq_to) {
+        _postman.sendError("E001", "Frequency range out of bounds", "bode", "frequency_range", "", 
+                          "Frequency must be 1Hz to 10kHz, from < to");
+        return;
+    }
+    
+    if (output_voltage < 0.1 || output_voltage > 20) {
+        _postman.sendError("E001", "Output voltage out of range", "bode", "output_voltage", "", 
+                          "Output voltage must be 0.1V to 20V");
+        return;
+    }
+    
+    if (points_per_decade < 1 || points_per_decade > 100) {
+        _postman.sendError("E001", "Points per decade out of range", "bode", "points_per_decade", "", 
+                          "Points per decade must be 1 to 100");
+        return;
+    }
+    
+    // Configure Bode measurement
+    _bode_config.channel = channel;
+    _bode_config.freq_from = freq_from;
+    _bode_config.freq_to = freq_to;
+    _bode_config.points_per_decade = points_per_decade;
+    _bode_config.output_voltage = output_voltage;
+    _bode_config.total_points = calculateTotalBodePoints();
+    _bode_config.current_point = 0;
+    
+    // Validate total points (max 500 per API spec)
+    if (_bode_config.total_points > 500) {
+        _postman.sendError("E006", "Too many measurement points", "bode", "points", "", 
+                          "Maximum 500 measurement points allowed");
+        return;
+    }
+    
+    // Initialize measurement state
+    _bode_buffer_count = 0;
+    _bode_running = true;
+    _bode_last_measurement = millis();
+    
+    // Calculate estimated duration
+    int estimated_duration = (_bode_config.total_points * _bode_measurement_delay_ms) / 1000 + 5;
+    
+    // Send success response
+    _postman.sendResponse("bode", "success", "Bode measurement started", estimated_duration);
+    
+    Serial.printf("Bode measurement started: %s, %.1fHz-%.1fHz, %d points/decade, %d total points\n", 
+                  channel.c_str(), freq_from, freq_to, points_per_decade, _bode_config.total_points);
 }
 
 void DriverControl::handleStep(JsonObjectConst settings) {
     Serial.println("Handling Step Response command");
-    _current_mode = "step";  // Set current mode
+    
+    // Stop any existing Step measurement
+    stopStepMeasurement();
+    
+    _current_mode = "step";
 
-    const char* channel = settings["channel"].as<const char*>();
+    // Parse settings according to API spec
+    String channel;
+    if (settings["channel"].is<const char*>()) {
+        channel = settings["channel"].as<String>();
+    } else {
+        _postman.sendError("E001", "Missing channel parameter", "step", "channel", "", "Provide CH0, CH1, or CH2");
+        return;
+    }
+    
     float voltage = settings["voltage"].as<float>();
     float measurement_time = settings["measurement_time"].as<float>();
 
-    Serial.printf("Channel: %s, Voltage: %.2fV, Time: %.3fs\n", channel, voltage, measurement_time);
+    Serial.printf("Channel: %s, Voltage: %.2fV, Time: %.3fs\n", channel.c_str(), voltage, measurement_time);
 
-    // Validate parameters
-    if (voltage < 0 || voltage > 20 || measurement_time < 0.001 || measurement_time > 10) {
-        _postman.sendError("E001", "Parameter out of range", "step", "voltage/measurement_time", "", "Check constraints");
+    // Validate parameters according to API spec constraints
+    if (voltage < 0 || voltage > 20) {
+        _postman.sendError("E001", "Voltage out of range", "step", "voltage", "", 
+                          "Voltage must be 0V to 20V");
+        return;
+    }
+    
+    if (measurement_time < 0.001 || measurement_time > 10) {
+        _postman.sendError("E001", "Measurement time out of range", "step", "measurement_time", "", 
+                          "Measurement time must be 0.001s to 10s");
         return;
     }
 
-    _postman.sendResponse("step", "success", "Step measurement started");
+    // Configure Step measurement
+    _step_config.channel = channel;
+    _step_config.voltage = voltage;
+    _step_config.measurement_time = measurement_time;
+    _step_config.total_points = STEP_DATA_POINTS;  // Fixed 200 points per API spec
+    _step_config.current_point = 0;
+    _step_config.time_step = measurement_time / (STEP_DATA_POINTS - 1);  // Time between samples
+    _step_config.start_time = 0;  // Will be set when measurement starts
+    
+    // Initialize measurement state
+    _step_buffer_count = 0;
+    _step_running = true;
+    _step_last_measurement = 0;
+    
+    // Calculate estimated duration
+    int estimated_duration = (int)(measurement_time + 2);  // measurement time + overhead
+    
+    // Send success response
+    _postman.sendResponse("step", "success", "Step measurement started", estimated_duration);
 
-    // TODO: Implement actual hardware control for step response
-    // TODO: Implement data streaming for step response
+    Serial.printf("Step measurement started: %s, %.2fV, %.3fs, %d points\n", 
+                  channel.c_str(), voltage, measurement_time, _step_config.total_points);
 }
 
 void DriverControl::handleImpulse(JsonObjectConst settings) {
     Serial.println("Handling Impulse Response command");
-    _current_mode = "impulse";  // Set current mode
+    
+    // Stop any existing Impulse measurement
+    stopImpulseMeasurement();
+    
+    _current_mode = "impulse";
 
+    // Parse settings according to API spec
     float voltage = settings["voltage"].as<float>();
     int duration_us = settings["duration_us"].as<int>();
     float measurement_time = settings["measurement_time"].as<float>();
 
     Serial.printf("Voltage: %.2fV, Duration: %dus, Time: %.3fs\n", voltage, duration_us, measurement_time);
 
-    // Validate parameters
-    if (voltage < 0 || voltage > 20 || duration_us < 1 || duration_us > 1000 || measurement_time < 0.001 || measurement_time > 2) {
-        _postman.sendError("E001", "Parameter out of range", "impulse", "voltage/duration/time", "", "Check constraints");
+    // Validate parameters according to API spec constraints
+    if (voltage < 0 || voltage > 20) {
+        _postman.sendError("E001", "Impulse voltage out of range", "impulse", "voltage", "", 
+                          "Voltage must be 0V to 20V");
+        return;
+    }
+    
+    if (duration_us < 1 || duration_us > 1000) {
+        _postman.sendError("E001", "Impulse duration out of range", "impulse", "duration_us", "", 
+                          "Duration must be 1μs to 1000μs");
+        return;
+    }
+    
+    if (measurement_time < 0.001 || measurement_time > 2) {
+        _postman.sendError("E001", "Measurement time out of range", "impulse", "measurement_time", "", 
+                          "Measurement time must be 0.001s to 2s");
         return;
     }
 
-    _postman.sendResponse("impulse", "success", "Impulse measurement started");
+    // Configure Impulse measurement
+    _impulse_config.voltage = voltage;
+    _impulse_config.duration_us = duration_us;
+    _impulse_config.measurement_time = measurement_time;
+    _impulse_config.total_points = IMPULSE_DATA_POINTS;  // Fixed 200 points
+    _impulse_config.current_point = 0;
+    _impulse_config.time_step = measurement_time / (IMPULSE_DATA_POINTS - 1);
+    _impulse_config.start_time = 0;  // Will be set when measurement starts
+    _impulse_config.impulse_applied = false;
+    
+    // Initialize measurement state
+    _impulse_buffer_count = 0;
+    _impulse_running = true;
+    _impulse_last_measurement = 0;
+    
+    // Calculate estimated duration
+    int estimated_duration = (int)(measurement_time + 1);  // measurement time + overhead
+    
+    // Send success response
+    _postman.sendResponse("impulse", "success", "Impulse measurement started", estimated_duration);
 
-    // TODO: Implement actual hardware control for impulse response
-    // TODO: Implement data streaming for impulse response
+    Serial.printf("Impulse measurement started: %.2fV, %dus, %.3fs, %d points\n", 
+                  voltage, duration_us, measurement_time, _impulse_config.total_points);
 }
 
 void DriverControl::handleTestbed(JsonObjectConst settings) {
@@ -279,9 +563,94 @@ void DriverControl::handleTestbed(JsonObjectConst settings) {
         return;
     }
 
-    _postman.sendResponse("testbed", "success", "Testbed mode activated");
+    // Apply power settings
+    _io.setPowerVoltage(target_voltage);
+    _io.setPowerCurrent(current_limit);
+    _io.updateAllDACs();
 
-    // TODO: Implement logic for continuous monitoring and data streaming
+    // Optional Signal DAC outputs (channels 0 and 1) in volts after amplifier
+    // Accepts either object: {"ch0": <V>, "ch1": <V>} or array: [<V0>, <V1>]
+    if (settings["signal"].is<JsonObjectConst>()) {
+        JsonObjectConst sig = settings["signal"].as<JsonObjectConst>();
+        bool ok = true;
+        if (sig["ch0"].is<float>()) {
+            ok &= _io.setSignalVoltage(SIGNAL_CHANNEL_A, sig["ch0"].as<float>());
+        }
+        if (sig["ch1"].is<float>()) {
+            ok &= _io.setSignalVoltage(SIGNAL_CHANNEL_B, sig["ch1"].as<float>());
+        }
+        _io.updateAllDACs();
+        if (!ok) {
+            String rangeStr = String("0-") + String(_io.getSignalVoltageRange(), 2) + "V";
+            _postman.sendError("E001", "Signal voltage out of range", "testbed", "signal", "", rangeStr.c_str());
+            return;
+        }
+    } else if (settings["signal"].is<JsonArrayConst>()) {
+        JsonArrayConst sig = settings["signal"].as<JsonArrayConst>();
+        bool ok = true;
+        if (sig.size() > 0 && sig[0].is<float>()) {
+            ok &= _io.setSignalVoltage(SIGNAL_CHANNEL_A, sig[0].as<float>());
+        }
+        if (sig.size() > 1 && sig[1].is<float>()) {
+            ok &= _io.setSignalVoltage(SIGNAL_CHANNEL_B, sig[1].as<float>());
+        }
+        _io.updateAllDACs();
+        if (!ok) {
+            String rangeStr = String("0-") + String(_io.getSignalVoltageRange(), 2) + "V";
+            _postman.sendError("E001", "Signal voltage out of range", "testbed", "signal", "", rangeStr.c_str());
+            return;
+        }
+    }
+
+    // Optional DA per-pin configuration/output
+    if (settings["da"].is<JsonArrayConst>()) {
+        JsonArrayConst daCfg = settings["da"].as<JsonArrayConst>();
+        for (uint8_t i = 0; i < daCfg.size() && i < 4; ++i) {
+            JsonObjectConst ch = daCfg[i];
+            const char* mode = ch["mode"].as<const char*>(); // "digital"|"analog"
+            float value_v = NAN;
+            if (ch["value"].is<float>()) value_v = ch["value"].as<float>();
+            // Legacy support: level 0/1
+            if (isnan(value_v) && ch["level"].is<int>()) value_v = (ch["level"].as<int>() != 0) ? 3.3f : 0.0f;
+            if (mode && strcmp(mode, "analog") == 0) {
+                if (isnan(value_v)) value_v = 0.0f;
+                _io.analogWriteDAVoltage(i, value_v);
+                _testbed_da_value_v[i] = value_v;
+            } else if (mode && strcmp(mode, "digital") == 0) {
+                bool high = (!isnan(value_v) && value_v >= 1.65f);
+                _io.digitalWriteDA(i, high);
+                _testbed_da_value_v[i] = high ? 3.3f : 0.0f;
+            }
+        }
+    }
+
+    // Optional DB per-pin configuration/output
+    if (settings["db"].is<JsonArrayConst>()) {
+        JsonArrayConst dbCfg = settings["db"].as<JsonArrayConst>();
+        for (uint8_t i = 0; i < dbCfg.size() && i < 4; ++i) {
+            JsonObjectConst ch = dbCfg[i];
+            const char* mode = ch["mode"].as<const char*>(); // "digital"|"analog"
+            float value_v = NAN;
+            if (ch["value"].is<float>()) value_v = ch["value"].as<float>();
+            if (isnan(value_v) && ch["level"].is<int>()) value_v = (ch["level"].as<int>() != 0) ? 3.3f : 0.0f;
+            if (mode && strcmp(mode, "analog") == 0) {
+                if (isnan(value_v)) value_v = 0.0f;
+                _io.analogWriteDBVoltage(i, value_v);
+                _testbed_db_value_v[i] = value_v;
+            } else if (mode && strcmp(mode, "digital") == 0) {
+                bool high = (!isnan(value_v) && value_v >= 1.65f);
+                _io.digitalWriteDB(i, high);
+                _testbed_db_value_v[i] = high ? 3.3f : 0.0f;
+            }
+        }
+    }
+
+    // Start/stop streaming
+    _testbed_running = continuous_monitoring;
+    _testbed_update_interval = update_interval_ms;
+    _testbed_last_update = 0;
+
+    _postman.sendResponse("testbed", "success", "Testbed mode activated");
 }
 
 void DriverControl::handleControlSystem(JsonObjectConst settings) {
@@ -539,19 +908,21 @@ float DriverControl::systemValueToVoltage(float value) {
 }
 
 float DriverControl::roundTo3Decimals(float value) {
-    // Round to 3 decimal places to reduce MQTT message size
-    return round(value * 100.0) / 100.0;
+    // Round to 3 decimal places for voltage display
+    return round(value * 1000.0) / 1000.0;
+}
+
+float DriverControl::roundTo6Decimals(float value) {
+    // Round to 6 decimal places for high-precision current measurements
+    return round(value * 1000000.0) / 1000000.0;
 }
 
 // VA characteristics helper functions
 
 bool DriverControl::isValidVAChannel(const String& channel, const String& mode_type) {
-    // CH0 and CH1: CV mode only
-    if ((channel == "CH0" || channel == "CH1") && mode_type == "CV") {
-        return true;
-    }
-    // CH2: Both CV and CC modes supported
-    if (channel == "CH2" && (mode_type == "CV" || mode_type == "CC")) {
+    // All channels support both CV and CC modes
+    if ((channel == "CH0" || channel == "CH1" || channel == "CH2") && 
+        (mode_type == "CV" || mode_type == "CC")) {
         return true;
     }
     return false;
@@ -563,63 +934,218 @@ void DriverControl::performVAMeasurement() {
         return;
     }
     
-    float voltage, current;
+    float device_voltage, current;
+    const int NUM_SAMPLES = 8;  // Increased sampling for better noise averaging
+    const int SAMPLE_DELAY_MS = 2;  // Delay between samples
+    const float VOLTAGE_STEP_INCREMENT = 0.05f;  // Output voltage increment per iteration
+    const int MAX_ITERATIONS = 50;  // Max iterations to reach target device voltage
+    const float DEVICE_VOLTAGE_TOLERANCE = 0.02f;  // 20mV tolerance for device voltage
     
     if (_va_config.mode_type == "CV") {
-        // Constant Voltage mode: set voltage, measure current
-        voltage = _va_config.start_voltage + (_va_config.current_step * _va_config.step_voltage);
+        // Constant Voltage mode: target is device voltage (V_A - V_B)
+        float target_device_voltage = _va_config.start_voltage + (_va_config.current_step * _va_config.step_voltage);
+        _va_config.target_device_voltage = target_device_voltage;
         
-        // Set the voltage on the appropriate channel
-        if (_va_config.channel == "CH0") {
-            _io.setSignalVoltage(SIGNAL_CHANNEL_A, voltage);
-        } else if (_va_config.channel == "CH1") {
-            _io.setSignalVoltage(SIGNAL_CHANNEL_B, voltage);
-        } else if (_va_config.channel == "CH2") {
-            _io.setPowerVoltage(voltage);
-        }
-        _io.updateAllDACs();
+        // Closed-loop: adjust output voltage until device voltage reaches target
+        bool target_reached = false;
+        bool voltage_capped = false;
         
-        // Wait a bit for voltage to settle
-        delay(10);
-        
-        // Measure current
-        if (_va_config.channel == "CH2") {
-            current = _io.readPowerCurrent();
-        } else {
-            // For signal channels, we'd need to measure current differentl
-            // This is a placeholder - actual implementation depends on hardware
-            //current = 0.001; // Placeholder current reading
-            if(_va_config.channel == "CH0") {
-                current = _io.readSignalVoltage(SIGNAL_CHANNEL_A);  //Expects 1ohm load for current measurement
-            } else if (_va_config.channel == "CH1") {
-                current = _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+        for (int iter = 0; iter < MAX_ITERATIONS && !target_reached && !voltage_capped; iter++) {
+            // Set the voltage on the appropriate drive channel
+            if (_va_config.channel == "CH0" || _va_config.channel == "CH1") {
+                _io.setSignalVoltage(SIGNAL_CHANNEL_A, _va_config.output_voltage);
+            } else if (_va_config.channel == "CH2") {
+                _io.setPowerVoltage(_va_config.output_voltage);
+            }
+            _io.updateAllDACs();
+            
+            // Wait for voltage to settle
+            delay(10);
+            
+            // Measure device voltage
+            float voltage_a = _io.readSignalVoltage(SIGNAL_CHANNEL_A);
+            float voltage_b = _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+            device_voltage = voltage_a - voltage_b;
+            
+            // Check if we've reached target device voltage
+            if (device_voltage >= target_device_voltage - DEVICE_VOLTAGE_TOLERANCE) {
+                target_reached = true;
             } else {
-                current = 0.0; // Should not happen
+                // Increase output voltage
+                _va_config.output_voltage += VOLTAGE_STEP_INCREMENT;
+                
+                // Check if we've hit the maximum output voltage
+                if (_va_config.output_voltage >= _va_config.max_output_voltage) {
+                    _va_config.output_voltage = _va_config.max_output_voltage;
+                    voltage_capped = true;
+                    _va_config.capped = true;
+                }
             }
         }
         
-    } else if (_va_config.mode_type == "CC") {
-        // Constant Current mode: set current, measure voltage
-        current = _va_config.start_current + (_va_config.current_step * _va_config.step_current);
+        // Apply final output voltage and take averaged measurement
+        if (_va_config.channel == "CH0" || _va_config.channel == "CH1") {
+            _io.setSignalVoltage(SIGNAL_CHANNEL_A, _va_config.output_voltage);
+        } else if (_va_config.channel == "CH2") {
+            _io.setPowerVoltage(_va_config.output_voltage);
+        }
+        _io.updateAllDACs();
+        delay(20);  // Extra settling time for final measurement
         
-        // Set the current on CH2 (only channel that supports CC mode)
-        if (_va_config.channel == "CH2") {
-            _io.setPowerCurrent(current);
-            delay(10); // Wait for current to settle
-            voltage = _io.readPowerVoltage();
+        // Multi-sample measurement with RMS calculation for noise reduction
+        float voltage_a_sq_sum = 0.0f;
+        float voltage_b_sq_sum = 0.0f;
+        float power_current_sq_sum = 0.0f;
+        
+        // Discard first reading (may be noisy after DAC update)
+        _io.readSignalVoltage(SIGNAL_CHANNEL_A);
+        _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+        delay(2);
+        
+        for (int i = 0; i < NUM_SAMPLES; i++) {
+            float va = _io.readSignalVoltage(SIGNAL_CHANNEL_A);
+            float vb = _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+            voltage_a_sq_sum += va * va;
+            voltage_b_sq_sum += vb * vb;
+            if (_va_config.channel == "CH2") {
+                float pc = _io.readPowerCurrent();
+                power_current_sq_sum += pc * pc;
+            }
+            
+            if (i < NUM_SAMPLES - 1) {
+                delay(SAMPLE_DELAY_MS);
+            }
+        }
+        
+        // Calculate RMS values
+        float voltage_a = sqrt(voltage_a_sq_sum / NUM_SAMPLES);
+        float voltage_b = sqrt(voltage_b_sq_sum / NUM_SAMPLES);
+        
+        // Device voltage = V_A - V_B (voltage across the device under test)
+        device_voltage = voltage_a - voltage_b;
+        
+        // Current calculation: I = V_shunt / R_shunt
+        if (_va_config.channel == "CH0" || _va_config.channel == "CH1") {
+            current = voltage_b / _va_config.shunt_resistance;
         } else {
-            // This shouldn't happen due to validation, but just in case
-            voltage = 0.0;
+            current = sqrt(power_current_sq_sum / NUM_SAMPLES);  // RMS of power current
+        }
+        
+        // If voltage was capped and we didn't reach target, end measurement early
+        if (voltage_capped && device_voltage < target_device_voltage - DEVICE_VOLTAGE_TOLERANCE) {
+            Serial.printf("VA measurement capped: output=%.2fV, device=%.3fV, target=%.3fV\n",
+                         _va_config.output_voltage, device_voltage, target_device_voltage);
+        }
+        
+    } else if (_va_config.mode_type == "CC") {
+        // Constant Current mode: adjust voltage to achieve target current
+        float target_current = _va_config.start_current + (_va_config.current_step * _va_config.step_current);
+        
+        // CC closed-loop control parameters
+        const float CC_GAIN = 0.5f;  // Proportional gain for current control
+        const int CC_ITERATIONS = 10;  // Max iterations to reach target current
+        const float CC_TOLERANCE = 0.01f;  // Current tolerance (1%)
+        
+        float measured_current = 0.0f;
+        
+        // Initialize output voltage on first step
+        if (_va_config.current_step == 0) {
+            _va_config.cc_output_voltage = target_current * _va_config.shunt_resistance;  // Initial estimate
+        }
+        
+        // Closed-loop iteration to achieve target current
+        for (int iter = 0; iter < CC_ITERATIONS; iter++) {
+            // Set the output voltage
+            if (_va_config.channel == "CH0" || _va_config.channel == "CH1") {
+                _io.setSignalVoltage(SIGNAL_CHANNEL_A, _va_config.cc_output_voltage);
+            } else if (_va_config.channel == "CH2") {
+                _io.setPowerCurrent(target_current);  // CH2 has direct current control
+                _io.updateAllDACs();
+                break;  // No need for closed-loop on CH2
+            }
+            _io.updateAllDACs();
+            
+            delay(5);  // Short settling time
+            
+            // Measure current
+            float voltage_b = _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+            measured_current = voltage_b / _va_config.shunt_resistance;
+            
+            // Check if we're within tolerance
+            float current_error = target_current - measured_current;
+            if (abs(current_error) < CC_TOLERANCE * target_current) {
+                break;  // Close enough
+            }
+            
+            // Adjust output voltage based on error
+            _va_config.cc_output_voltage += current_error * _va_config.shunt_resistance * CC_GAIN;
+            
+            // Clamp output voltage to valid range
+            if (_va_config.cc_output_voltage < 0) _va_config.cc_output_voltage = 0;
+            if (_va_config.cc_output_voltage >= _va_config.max_output_voltage) {
+                _va_config.cc_output_voltage = _va_config.max_output_voltage;
+                _va_config.capped = true;
+                break;  // Can't go higher
+            }
+        }
+        
+        // Final measurement with RMS calculation
+        float voltage_a_sq_sum = 0.0f;
+        float voltage_b_sq_sum = 0.0f;
+        float power_current_sq_sum = 0.0f;
+        
+        for (int i = 0; i < NUM_SAMPLES; i++) {
+            float va = _io.readSignalVoltage(SIGNAL_CHANNEL_A);
+            float vb = _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+            voltage_a_sq_sum += va * va;
+            voltage_b_sq_sum += vb * vb;
+            if (_va_config.channel == "CH2") {
+                float pc = _io.readPowerCurrent();
+                power_current_sq_sum += pc * pc;
+            }
+            
+            if (i < NUM_SAMPLES - 1) {
+                delay(SAMPLE_DELAY_MS);
+            }
+        }
+        
+        // Calculate RMS values
+        float voltage_a = sqrt(voltage_a_sq_sum / NUM_SAMPLES);
+        float voltage_b = sqrt(voltage_b_sq_sum / NUM_SAMPLES);
+        
+        // Device voltage = V_A - V_B
+        device_voltage = voltage_a - voltage_b;
+        
+        // Current calculation
+        if (_va_config.channel == "CH0" || _va_config.channel == "CH1") {
+            current = voltage_b / _va_config.shunt_resistance;
+        } else {
+            current = sqrt(power_current_sq_sum / NUM_SAMPLES);  // RMS of power current
         }
     }
     
-    // Calculate progress
-    float progress = (float)(_va_config.current_step + 1) / _va_config.total_steps * 100.0f;
-    bool completed = (_va_config.current_step + 1) >= _va_config.total_steps;
+    // Calculate progress based on actual device voltage reached vs target range
+    float voltage_range = _va_config.end_voltage - _va_config.start_voltage;
+    float progress;
+    bool completed;
+    
+    if (_va_config.mode_type == "CV") {
+        // For CV mode, progress is based on device voltage achieved
+        progress = ((device_voltage - _va_config.start_voltage) / voltage_range) * 100.0f;
+        if (progress < 0) progress = 0;
+        if (progress > 100) progress = 100;
+        
+        // Completed if we reached end voltage OR if output is capped
+        completed = (device_voltage >= _va_config.end_voltage - 0.02f) || _va_config.capped;
+    } else {
+        // For CC mode, progress is based on step count
+        progress = (float)(_va_config.current_step + 1) / _va_config.total_steps * 100.0f;
+        completed = (_va_config.current_step + 1) >= _va_config.total_steps || _va_config.capped;
+    }
     
     // Store data point in buffer
     if (_va_buffer_count < VA_BUFFER_SIZE) {
-        _va_data_buffer[_va_buffer_count].voltage = voltage;
+        _va_data_buffer[_va_buffer_count].voltage = device_voltage;
         _va_data_buffer[_va_buffer_count].current = current;
         _va_data_buffer[_va_buffer_count].timestamp = millis();
         _va_buffer_count++;
@@ -684,11 +1210,12 @@ void DriverControl::sendBufferedVAData(bool completed) {
     payload["mode"] = "va";
     
     // Create data array with all buffered measurement points
+    // Use high precision for current to avoid stair-stepping with small currents
     JsonArray data_array = payload["data"].to<JsonArray>();
     for (int i = 0; i < _va_buffer_count; i++) {
         JsonObject data_point = data_array.add<JsonObject>();
-        data_point["voltage"] = roundTo3Decimals(_va_data_buffer[i].voltage);
-        data_point["current"] = roundTo3Decimals(_va_data_buffer[i].current);
+        data_point["voltage"] = roundTo6Decimals(_va_data_buffer[i].voltage);
+        data_point["current"] = roundTo6Decimals(_va_data_buffer[i].current);
     }
     
     // Calculate progress based on current step
@@ -716,14 +1243,15 @@ void DriverControl::stopVAMeasurement() {
         _va_running = false;
         _current_mode = "none";  // Reset mode when measurement stops
         
+        // Clear buffer to prevent further data sending
+        _va_buffer_count = 0;
+        
         // Reset outputs to safe values
-        if (_va_config.channel == "CH0") {
-            _io.setSignalVoltage(SIGNAL_CHANNEL_A, 0.0);
-        } else if (_va_config.channel == "CH1") {
-            _io.setSignalVoltage(SIGNAL_CHANNEL_B, 0.0);
-        } else if (_va_config.channel == "CH2") {
-            _io.setPowerVoltage(0.0);
-        }
+        _io.setSignalVoltage(SIGNAL_CHANNEL_A, 0.0);
+        _io.setSignalVoltage(SIGNAL_CHANNEL_B, 0.0);
+        _io.setPowerVoltage(0.0);
+        _io.setPowerCurrent(0.0);  // Also reset current limit to 0
+ 
         _io.updateAllDACs();
         
         Serial.println("VA measurement stopped and outputs reset");
@@ -743,6 +1271,21 @@ void DriverControl::handleStopCommand(const char* mode) {
         stopVAMeasurement();
         _postman.sendResponse("va", "success", "VA measurement stopped");
         Serial.println("VA measurement stopped via MQTT command");
+    } else if (strcmp(mode, "bode") == 0) {
+        // Stop Bode measurement
+        stopBodeMeasurement();
+        _postman.sendResponse("bode", "success", "Bode measurement stopped");
+        Serial.println("Bode measurement stopped via MQTT command");
+    } else if (strcmp(mode, "step") == 0) {
+        // Stop Step measurement
+        stopStepMeasurement();
+        _postman.sendResponse("step", "success", "Step measurement stopped");
+        Serial.println("Step measurement stopped via MQTT command");
+    } else if (strcmp(mode, "impulse") == 0) {
+        // Stop Impulse measurement
+        stopImpulseMeasurement();
+        _postman.sendResponse("impulse", "success", "Impulse measurement stopped");
+        Serial.println("Impulse measurement stopped via MQTT command");
     } else if (strcmp(mode, "testbed") == 0) {
         // Stop testbed mode
         _testbed_running = false;
@@ -751,7 +1294,7 @@ void DriverControl::handleStopCommand(const char* mode) {
         Serial.println("Testbed mode stopped via MQTT command");
     } else {
         // Unknown mode
-        _postman.sendError("E005", "Invalid stop mode", "stop", "mode", mode, "Use 'control_system', 'va', or 'testbed'");
+        _postman.sendError("E005", "Invalid stop mode", "stop", "mode", mode, "Use 'control_system', 'va', 'bode', 'step', 'impulse', or 'testbed'");
         Serial.printf("Unknown stop mode: %s\n", mode);
     }
 }
@@ -906,6 +1449,394 @@ void DriverControl::sendBufferedData() {
         _postman.publish("data", doc);
         
         Serial.printf("Sent %d control system samples\n", timestamps.size());
+    }
+}
+
+// ============================================================================
+// Bode characteristics helper functions
+// ============================================================================
+
+int DriverControl::calculateTotalBodePoints() {
+    // Calculate number of decades
+    float decades = log10(_bode_config.freq_to / _bode_config.freq_from);
+    return (int)(decades * _bode_config.points_per_decade) + 1;
+}
+
+float DriverControl::calculateBodeFrequency(int point_index) {
+    // Calculate frequency for logarithmic spacing
+    float decades = log10(_bode_config.freq_to / _bode_config.freq_from);
+    float fraction = (float)point_index / (_bode_config.total_points - 1);
+    return _bode_config.freq_from * pow(10, fraction * decades);
+}
+
+void DriverControl::performBodeMeasurement() {
+    if (!_bode_running || _bode_config.current_point >= _bode_config.total_points) {
+        stopBodeMeasurement();
+        return;
+    }
+    
+    // Calculate current frequency
+    float frequency = calculateBodeFrequency(_bode_config.current_point);
+    
+    // Set the output signal at the current frequency
+    // For actual implementation, this would generate a sine wave at this frequency
+    // and measure the input/output amplitude and phase difference
+    
+    // Set output voltage amplitude on appropriate channel
+    if (_bode_config.channel == "CH0") {
+        _io.setSignalVoltage(SIGNAL_CHANNEL_A, _bode_config.output_voltage);
+    } else if (_bode_config.channel == "CH1") {
+        _io.setSignalVoltage(SIGNAL_CHANNEL_B, _bode_config.output_voltage);
+    } else if (_bode_config.channel == "CH2") {
+        _io.setPowerVoltage(_bode_config.output_voltage);
+    }
+    _io.updateAllDACs();
+    
+    // Wait for system to settle at this frequency
+    // In a real implementation, we'd generate a sine wave and perform FFT or
+    // synchronous detection to measure gain and phase
+    delay(10);
+    
+    // Measure response - placeholder implementation
+    // In real implementation: apply sine wave, measure output, calculate gain/phase
+    float input_amplitude = _bode_config.output_voltage;
+    float output_amplitude;
+    
+    if (_bode_config.channel == "CH0") {
+        output_amplitude = _io.readSignalVoltage(SIGNAL_CHANNEL_A);
+    } else if (_bode_config.channel == "CH1") {
+        output_amplitude = _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+    } else {
+        output_amplitude = _io.readPowerVoltage();
+    }
+    
+    // Calculate gain in dB (simplified - real implementation needs proper signal analysis)
+    float gain_db = 20.0 * log10(output_amplitude / input_amplitude + 0.001);  // Add small value to avoid log(0)
+    
+    // Phase calculation would require time-domain analysis or synchronous detection
+    // For now, use a placeholder that simulates typical first-order system behavior
+    float phase_deg = -atan(frequency / 100.0) * 180.0 / M_PI;  // Placeholder phase
+    
+    // Store data point in buffer
+    if (_bode_buffer_count < BODE_BUFFER_SIZE) {
+        _bode_data_buffer[_bode_buffer_count].frequency = frequency;
+        _bode_data_buffer[_bode_buffer_count].gain = gain_db;
+        _bode_data_buffer[_bode_buffer_count].phase = phase_deg;
+        _bode_buffer_count++;
+    }
+    
+    // Calculate progress
+    float progress = (float)(_bode_config.current_point + 1) / _bode_config.total_points * 100.0f;
+    bool completed = (_bode_config.current_point + 1) >= _bode_config.total_points;
+    
+    // Send buffered data if buffer is full or measurement is completed
+    if (_bode_buffer_count >= BODE_BUFFER_SIZE || completed) {
+        sendBufferedBodeData(completed);
+    }
+    
+    // Move to next frequency point
+    _bode_config.current_point++;
+    
+    if (completed) {
+        Serial.println("Bode measurement completed");
+        _bode_running = false;
+        _current_mode = "none";
+    }
+}
+
+void DriverControl::sendBufferedBodeData(bool completed) {
+    if (_bode_buffer_count == 0) return;
+    
+    JsonDocument doc;
+    
+    char timestamp[30];
+    snprintf(timestamp, sizeof(timestamp), "%lu", millis());
+    
+    doc["timestamp"] = timestamp;
+    doc["message_id"] = "bode-data-" + String(millis());
+    doc["type"] = "data";
+    
+    JsonObject payload = doc["payload"].to<JsonObject>();
+    payload["mode"] = "bode";
+    
+    // Create data array with all buffered measurement points
+    JsonArray data_array = payload["data"].to<JsonArray>();
+    for (int i = 0; i < _bode_buffer_count; i++) {
+        JsonObject data_point = data_array.add<JsonObject>();
+        data_point["frequency"] = roundTo3Decimals(_bode_data_buffer[i].frequency);
+        data_point["gain"] = roundTo3Decimals(_bode_data_buffer[i].gain);
+        data_point["phase"] = roundTo3Decimals(_bode_data_buffer[i].phase);
+    }
+    
+    float progress = (float)(_bode_config.current_point + 1) / _bode_config.total_points * 100.0f;
+    payload["progress"] = roundTo3Decimals(progress);
+    payload["completed"] = completed;
+    
+    _postman.publish("data", doc);
+    
+    Serial.printf("Bode buffered data sent: %d points, Progress=%.1f%%, Completed=%s\n", 
+                  _bode_buffer_count, progress, completed ? "true" : "false");
+    
+    // Reset buffer
+    _bode_buffer_count = 0;
+}
+
+void DriverControl::stopBodeMeasurement() {
+    if (_bode_running) {
+        // Send any remaining buffered data
+        if (_bode_buffer_count > 0) {
+            sendBufferedBodeData(true);
+        }
+        
+        _bode_running = false;
+        _current_mode = "none";
+        _bode_buffer_count = 0;
+        
+        // Reset outputs to safe values
+        _io.setSignalVoltage(SIGNAL_CHANNEL_A, 0.0);
+        _io.setSignalVoltage(SIGNAL_CHANNEL_B, 0.0);
+        _io.setPowerVoltage(0.0);
+        _io.updateAllDACs();
+        
+        Serial.println("Bode measurement stopped and outputs reset");
+    }
+}
+
+// ============================================================================
+// Step response helper functions
+// ============================================================================
+
+void DriverControl::performStepMeasurement() {
+    // Initialize measurement on first call
+    if (_step_config.start_time == 0) {
+        _step_config.start_time = micros();
+        
+        // Apply step voltage to channel
+        if (_step_config.channel == "CH0") {
+            _io.setSignalVoltage(SIGNAL_CHANNEL_A, _step_config.voltage);
+        } else if (_step_config.channel == "CH1") {
+            _io.setSignalVoltage(SIGNAL_CHANNEL_B, _step_config.voltage);
+        } else if (_step_config.channel == "CH2") {
+            _io.setPowerVoltage(_step_config.voltage);
+        }
+        _io.updateAllDACs();
+        
+        Serial.println("Step voltage applied");
+    }
+    
+    // Calculate elapsed time in seconds
+    unsigned long elapsed_us = micros() - _step_config.start_time;
+    float elapsed_s = elapsed_us / 1000000.0f;
+    
+    // Check if it's time for next sample
+    float expected_time = _step_config.current_point * _step_config.time_step;
+    
+    if (elapsed_s >= expected_time && _step_config.current_point < _step_config.total_points) {
+        // Read response from the channel
+        float response;
+        if (_step_config.channel == "CH0") {
+            response = _io.readSignalVoltage(SIGNAL_CHANNEL_A);
+        } else if (_step_config.channel == "CH1") {
+            response = _io.readSignalVoltage(SIGNAL_CHANNEL_B);
+        } else {
+            response = _io.readPowerVoltage();
+        }
+        
+        // Store data point
+        if (_step_buffer_count < STEP_DATA_POINTS) {
+            _step_data_buffer[_step_buffer_count].time = elapsed_s;
+            _step_data_buffer[_step_buffer_count].response = response;
+            _step_buffer_count++;
+        }
+        
+        _step_config.current_point++;
+        
+        // Check if measurement is complete
+        if (_step_config.current_point >= _step_config.total_points) {
+            sendBufferedStepData(true);
+            stopStepMeasurement();
+            return;
+        }
+        
+        // Send partial data every 50 points
+        if (_step_buffer_count >= 50) {
+            float progress = (float)_step_config.current_point / _step_config.total_points * 100.0f;
+            sendBufferedStepData(false);
+        }
+    }
+}
+
+void DriverControl::sendBufferedStepData(bool completed) {
+    if (_step_buffer_count == 0) return;
+    
+    JsonDocument doc;
+    
+    char timestamp[30];
+    snprintf(timestamp, sizeof(timestamp), "%lu", millis());
+    
+    doc["timestamp"] = timestamp;
+    doc["message_id"] = "step-data-" + String(millis());
+    doc["type"] = "data";
+    
+    JsonObject payload = doc["payload"].to<JsonObject>();
+    payload["mode"] = "step";
+    
+    // Create data array with all buffered measurement points
+    JsonArray data_array = payload["data"].to<JsonArray>();
+    for (int i = 0; i < _step_buffer_count; i++) {
+        JsonObject data_point = data_array.add<JsonObject>();
+        data_point["time"] = _step_data_buffer[i].time;  // Keep full precision for time
+        data_point["response"] = roundTo3Decimals(_step_data_buffer[i].response);
+    }
+    
+    float progress = (float)_step_config.current_point / _step_config.total_points * 100.0f;
+    payload["progress"] = roundTo3Decimals(progress);
+    payload["completed"] = completed;
+    
+    _postman.publish("data", doc);
+    
+    Serial.printf("Step buffered data sent: %d points, Progress=%.1f%%, Completed=%s\n", 
+                  _step_buffer_count, progress, completed ? "true" : "false");
+    
+    // Reset buffer
+    _step_buffer_count = 0;
+}
+
+void DriverControl::stopStepMeasurement() {
+    if (_step_running) {
+        // Send any remaining buffered data
+        if (_step_buffer_count > 0) {
+            sendBufferedStepData(true);
+        }
+        
+        _step_running = false;
+        _current_mode = "none";
+        _step_buffer_count = 0;
+        _step_config.start_time = 0;
+        
+        // Reset outputs to safe values
+        _io.setSignalVoltage(SIGNAL_CHANNEL_A, 0.0);
+        _io.setSignalVoltage(SIGNAL_CHANNEL_B, 0.0);
+        _io.setPowerVoltage(0.0);
+        _io.updateAllDACs();
+        
+        Serial.println("Step measurement stopped and outputs reset");
+    }
+}
+
+// ============================================================================
+// Impulse response helper functions
+// ============================================================================
+
+void DriverControl::performImpulseMeasurement() {
+    // Initialize measurement on first call
+    if (_impulse_config.start_time == 0) {
+        _impulse_config.start_time = micros();
+        
+        // Apply impulse voltage to CH2 (power channel)
+        _io.setPowerVoltage(_impulse_config.voltage);
+        _io.updateAllDACs();
+        
+        // Wait for impulse duration
+        delayMicroseconds(_impulse_config.duration_us);
+        
+        // Remove impulse (set to 0V)
+        _io.setPowerVoltage(0.0);
+        _io.updateAllDACs();
+        
+        _impulse_config.impulse_applied = true;
+        Serial.printf("Impulse applied: %.2fV for %dus\n", 
+                      _impulse_config.voltage, _impulse_config.duration_us);
+    }
+    
+    // Calculate elapsed time in seconds
+    unsigned long elapsed_us = micros() - _impulse_config.start_time;
+    float elapsed_s = elapsed_us / 1000000.0f;
+    
+    // Check if it's time for next sample
+    float expected_time = _impulse_config.current_point * _impulse_config.time_step;
+    
+    if (elapsed_s >= expected_time && _impulse_config.current_point < _impulse_config.total_points) {
+        // Read response from power channel
+        float response = _io.readPowerVoltage();
+        
+        // Store data point
+        if (_impulse_buffer_count < IMPULSE_DATA_POINTS) {
+            _impulse_data_buffer[_impulse_buffer_count].time = elapsed_s;
+            _impulse_data_buffer[_impulse_buffer_count].response = response;
+            _impulse_buffer_count++;
+        }
+        
+        _impulse_config.current_point++;
+        
+        // Check if measurement is complete
+        if (_impulse_config.current_point >= _impulse_config.total_points) {
+            sendBufferedImpulseData(true);
+            stopImpulseMeasurement();
+            return;
+        }
+        
+        // Send partial data every 50 points
+        if (_impulse_buffer_count >= 50) {
+            sendBufferedImpulseData(false);
+        }
+    }
+}
+
+void DriverControl::sendBufferedImpulseData(bool completed) {
+    if (_impulse_buffer_count == 0) return;
+    
+    JsonDocument doc;
+    
+    char timestamp[30];
+    snprintf(timestamp, sizeof(timestamp), "%lu", millis());
+    
+    doc["timestamp"] = timestamp;
+    doc["message_id"] = "impulse-data-" + String(millis());
+    doc["type"] = "data";
+    
+    JsonObject payload = doc["payload"].to<JsonObject>();
+    payload["mode"] = "impulse";
+    
+    // Create data array with all buffered measurement points
+    JsonArray data_array = payload["data"].to<JsonArray>();
+    for (int i = 0; i < _impulse_buffer_count; i++) {
+        JsonObject data_point = data_array.add<JsonObject>();
+        data_point["time"] = _impulse_data_buffer[i].time;  // Keep full precision for time
+        data_point["response"] = roundTo3Decimals(_impulse_data_buffer[i].response);
+    }
+    
+    float progress = (float)_impulse_config.current_point / _impulse_config.total_points * 100.0f;
+    payload["progress"] = roundTo3Decimals(progress);
+    payload["completed"] = completed;
+    
+    _postman.publish("data", doc);
+    
+    Serial.printf("Impulse buffered data sent: %d points, Progress=%.1f%%, Completed=%s\n", 
+                  _impulse_buffer_count, progress, completed ? "true" : "false");
+    
+    // Reset buffer
+    _impulse_buffer_count = 0;
+}
+
+void DriverControl::stopImpulseMeasurement() {
+    if (_impulse_running) {
+        // Send any remaining buffered data
+        if (_impulse_buffer_count > 0) {
+            sendBufferedImpulseData(true);
+        }
+        
+        _impulse_running = false;
+        _current_mode = "none";
+        _impulse_buffer_count = 0;
+        _impulse_config.start_time = 0;
+        _impulse_config.impulse_applied = false;
+        
+        // Reset outputs to safe values
+        _io.setPowerVoltage(0.0);
+        _io.updateAllDACs();
+        
+        Serial.println("Impulse measurement stopped and outputs reset");
     }
 }
 

@@ -34,18 +34,13 @@ All MQTT messages use JSON format with the following base structure:
 **Purpose:** Voltage-current characteristic measurements with CV (Constant Voltage) or CC (Constant Current) control.
 
 **Measurement Setup:**
-```
-    SIGNAL_CHANNEL_A ──┬── Device Under Test ──┬── Shunt Resistor ── SIGNAL_CHANNEL_B ── GND
-                       │                       │
-                   V_device                V_shunt
-```
-
-- **Device voltage:** V_A - V_B (voltage across the device under test)
-- **Current calculation:** I = V_B / R_shunt (current through the shunt resistor)
+- **Voltage measurement:** SIGNAL_CHANNEL_A (device voltage feedback)
+- **Current measurement:**
+  - CH0, CH1: SIGNAL_CHANNEL_B (shunt resistor voltage, V = I × R_shunt)
+  - CH2: Power current driver feedback
 - **Drive output:**
-  - CH0, CH1: SIGNAL_CHANNEL_A (voltage source)
+  - CH0, CH1: SIGNAL_CHANNEL_A
   - CH2: Power voltage/current driver
-- **CC Mode:** Closed-loop control adjusts output voltage to achieve target current
 
 #### Command Message
 ```json
@@ -58,7 +53,6 @@ All MQTT messages use JSON format with the following base structure:
     "settings": {
       "channel": "CH0|CH1|CH2",
       "mode_type": "CV|CC",
-      "shunt_resistance": 1.0,
       "cv_settings": {
         "start_voltage": 0.0,
         "end_voltage": 5.0,
@@ -68,18 +62,12 @@ All MQTT messages use JSON format with the following base structure:
         "start_current": 0.0,
         "end_current": 1.0,
         "step_current": 0.01
-      }
+      },
+      "shunt_resistance": 1.0
     }
   }
 }
 ```
-
-**Parameters:**
-- `shunt_resistance`: Value of shunt resistor in Ohms (default: 1.0Ω). Required for current calculation.
-- `start_voltage` / `end_voltage`: Target **device voltage** range (V_A - V_B), not output voltage
-- `step_voltage`: Device voltage step size for sweep
-
-**Important:** The voltage parameters specify the **device voltage** (voltage across DUT), not the output voltage. The system automatically adjusts output voltage to achieve the target device voltage.
 
 #### Response Message
 ```json
@@ -105,9 +93,9 @@ All MQTT messages use JSON format with the following base structure:
   "payload": {
     "mode": "va",
     "data": [
-      {"voltage": 0.000000, "current": 0.001234},
-      {"voltage": 0.100000, "current": 0.011234},
-      {"voltage": 0.200000, "current": 0.021234}
+      {"voltage": 0.0, "current": 0.001},
+      {"voltage": 0.1, "current": 0.011},
+      {"voltage": 0.2, "current": 0.021}
     ],
     "progress": 15.5,
     "completed": false
@@ -119,30 +107,10 @@ All MQTT messages use JSON format with the following base structure:
 - CH0, CH1, CH2: Both CV and CC modes supported
 
 **Measurement Notes:**
-- **Device voltage** = V_A - V_B (voltage drop across the device under test)
-- **Current** = V_B / R_shunt (current through the shunt resistor)
-- For CH2: Current can also be measured directly from the power current driver
-- All measurements use 8-sample averaging for noise reduction
-- CC mode uses closed-loop control with proportional gain to achieve target current
-- Voltage and current values are reported with 6 decimal places to preserve precision for small values
-- When using high-value shunt resistors (e.g., 680Ω), currents will be in mA range (e.g., 0.001 = 1mA)
-
-**Data Precision:**
-- Voltage: 6 decimal places (µV precision)
-- Current: 6 decimal places (µA precision)
-- For display, the webapp should apply appropriate unit scaling (mA, µA, etc.)
-
-**Sweep Behavior (CV Mode):**
-- The system sweeps **device voltage** (V_A - V_B) from `start_voltage` to `end_voltage`
-- Output voltage is automatically adjusted using closed-loop control to achieve target device voltage
-- If output voltage reaches maximum (~13.7V for CH0/CH1, ~13.5V for CH2), measurement ends early
-- Progress is calculated based on actual device voltage achieved vs. target range
-
-**Settings Constraints:**
-- Device voltage range (CV mode): 0V to 20V (limited by output voltage capability)
-- Current range (CC mode): 0A to 3A
-- Shunt resistance: > 0Ω (default: 1.0Ω)
-- Maximum output voltage: ~13.7V (CH0/CH1), ~13.5V (CH2)
+- Voltage is measured via SIGNAL_CHANNEL_A (device under test)
+- For CH0/CH1: Current is derived from shunt voltage on SIGNAL_CHANNEL_B (requires known shunt resistance)
+- For CH2: Current is measured directly from the power current driver
+- All measurements use triple-sampling with averaging for noise reduction
 
 ---
 

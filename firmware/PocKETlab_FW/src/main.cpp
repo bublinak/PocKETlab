@@ -4,7 +4,9 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
-//#include <SmartLEDs.h> // Corrected to SmartLEDs.h
+#include <SmartLeds.h> 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "pin_definitions.h"
 #include "pd_control.h"
 #include "netman.h"
@@ -13,18 +15,17 @@
 #include "driver_control.h"
 
 // LED Configuration
-//#define LED_PIN 38
-//#define NUM_LEDS 3
-//#define LED_TYPE LED_WS2812B
-//#define BRIGHTNESS 50
+#define LED_PIN 38
+#define NUM_LEDS 3
+#define BRIGHTNESS 50
 
-//SmartLed leds(LED_TYPE, NUM_LEDS, LED_PIN); // Assuming SmartLEDs class constructor
+SmartLed leds(LED_WS2812B, NUM_LEDS, LED_PIN); // Assuming SmartLEDs class constructor
 
 // PD Control instance - adjust chip type and pins according to your hardware
 // For CH224K:
-PDControl pdControl(CH224K, PIN_I2C_SCL_PRIMARY, PIN_I2C_SDA_PRIMARY, PIN_PD_SPL);
+// PDControl pdControl(CH224K, PIN_I2C_SCL_PRIMARY, PIN_I2C_SDA_PRIMARY, PIN_PD_SPL);
 // For CH224Q (uncomment if using CH224Q):
-// PDControl pdControl(CH224Q, PIN_I2C_SDA_PRIMARY, PIN_I2C_SCL_PRIMARY);
+PDControl pdControl(CH224Q, PIN_I2C_SDA_PRIMARY, PIN_I2C_SCL_PRIMARY);
 // PDControl pdControl(FIVE_V_ONLY); // Using 5V only mode as emergency fallback
 
 // Network Manager instance
@@ -34,13 +35,13 @@ NetMan netManager("PocKETlab", "admin123");
 PocKETlabIO pocketlabIO;
 
 // MQTT and Driver Control
-const char* mqtt_server = "10.0.0.42"; // <<< CHANGE TO YOUR MQTT BROKER
+const char* mqtt_server = "broker.hivemq.com"; // <<< CHANGE TO YOUR MQTT BROKER
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
 // Get MAC address for unique board ID
 // String mac = WiFi.macAddress();
-PostmanMQTT postman(mqttClient, "pocketlab_01");
+PostmanMQTT postman(mqttClient, "pocketlab_02");
 
 DriverControl driver(postman, pocketlabIO);
 
@@ -59,7 +60,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
     driver.handleCommand(doc);
 }
-/*
+//*/
 void fadeIn()
 {
 	for (int i = 0; i <= BRIGHTNESS; i++)
@@ -93,7 +94,7 @@ void fadeOut()
 	}
 	leds.show();
 }
-*/
+//*/
 void setup()
 {
 	delay(1000); // Wait for USB CDC to initialize
@@ -152,12 +153,12 @@ void setup()
 
 	// LEDs are typically initialized in their constructor or a begin() method
 	// If SmartLEDs has a begin() method, it should be called here.
-	// leds.begin(); // Uncomment if applicable
+	leds.begin();
 
 	pinMode(21, OUTPUT);
 
 	Serial.println("Fading in LEDs...");
-	//fadeIn();
+	fadeIn();
 
 	Serial.println("Testing fan...");
 	digitalWrite(21, HIGH);
@@ -165,11 +166,11 @@ void setup()
 	digitalWrite(21, LOW);
 	Serial.println("Fan test done.");
 	Serial.println("Fading out LEDs...");
-	//fadeOut();
+	fadeOut();
 	// Test PD voltage settings
 	Serial.println("Testing PD voltage settings...");
-	float testVoltages[] = {9.0, 12.0, 15.0, 20.0, 5.0};
-	for (int i = 0; i < 5; i++)
+	float testVoltages[] = {5.0, 9.0, 12.0};
+	for (int i = 0; i < 3; i++)
 	{
 		Serial.print("Setting PD voltage to ");
 		Serial.print(testVoltages[i]);
@@ -181,7 +182,7 @@ void setup()
 		Serial.println("V");
 	}
 
-	// Test PocKETlab I/O functionality
+	/*// Test PocKETlab I/O functionality
 	if (pocketlabIO.isInitialized())
 	{
 		Serial.println("Testing PocKETlab I/O functionality...");
@@ -214,6 +215,7 @@ void setup()
 		Serial.println("\nComplete I/O readings:");
 		pocketlabIO.printStatus();
 	}
+	*/
 
 	// Don't disconnect WiFi since netManager handles it
 	Serial.println("Setup done");

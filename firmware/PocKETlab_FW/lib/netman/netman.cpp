@@ -45,7 +45,11 @@ bool NetMan::begin() {
         _switchToMode(MODE_STA);
     } else {
         // No connection possible, start AP mode
-        Serial.println("NetMan: No known networks available, starting AP mode");
+        if (_knownNetworks.empty()) {
+            Serial.println("NetMan: No saved networks found, starting AP mode");
+        } else {
+            Serial.println("NetMan: Failed to connect to any saved network, starting AP mode");
+        }
         if (hasWebUI) {
             _switchToMode(MODE_AP_FULL);
         } else {
@@ -70,11 +74,8 @@ void NetMan::loop() {
         if (_apModeTimeout > 0 && millis() > _apModeTimeout) {
             Serial.println("NetMan: AP mode timeout, attempting to reconnect");
             if (connectToKnownNetwork()) {
-                if (hasWebUIFiles()) {
-                    _switchToMode(MODE_AP_FULL);
-                } else {
-                    _switchToMode(MODE_STA);
-                }
+                // When connected, always switch to STA mode
+                _switchToMode(MODE_STA);
             } else {
                 _apModeTimeout = millis() + AP_MODE_TIMEOUT; // Reset timeout
             }
@@ -105,11 +106,18 @@ bool NetMan::addNetwork(const String& ssid, const String& password) {
     Serial.println("NetMan: addNetwork() called for SSID: " + ssid);
     
     // Check if network already exists
-    for (auto& network : _knownNetworks) {
-        if (network.ssid == ssid) {
+    for (size_t idx = 0; idx < _knownNetworks.size(); ++idx) {
+        if (_knownNetworks[idx].ssid == ssid) {
             Serial.println("NetMan: Updating existing network");
-            network.password = password;
-            network.enabled = true;
+            _knownNetworks[idx].password = password;
+            _knownNetworks[idx].enabled = true;
+            // Move this network to the front so it will be tried first even after reboot
+            if (idx != 0) {
+                WiFiCredentials preferred = _knownNetworks[idx];
+                _knownNetworks.erase(_knownNetworks.begin() + idx);
+                _knownNetworks.insert(_knownNetworks.begin(), preferred);
+            }
+            _currentNetworkIndex = 0;
             return _saveNetworks();
         }
     }
@@ -121,6 +129,13 @@ bool NetMan::addNetwork(const String& ssid, const String& password) {
     newNetwork.enabled = true;
     
     _knownNetworks.push_back(newNetwork);
+    // Move newly added network to the front so it will be tried first even after reboot
+    if (_knownNetworks.size() > 1) {
+        WiFiCredentials preferred = _knownNetworks.back();
+        _knownNetworks.pop_back();
+        _knownNetworks.insert(_knownNetworks.begin(), preferred);
+    }
+    _currentNetworkIndex = 0;
     Serial.println("NetMan: Added new network to memory, now saving...");
     return _saveNetworks();
 }
@@ -517,7 +532,7 @@ async function addNetwork(event) {
     const password = document.getElementById('password').value;
     
     try {
-        const response = await fetch('/configure', {
+        const response = await fetch('/addnetwork', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
             body: 'ssid=' + encodeURIComponent(ssid) + '&password=' + encodeURIComponent(password)
@@ -574,7 +589,7 @@ setInterval(updateStatus, 10000);
 
 void NetMan::_handleNetworks() {
     if (!_isAuthenticated()) {
-        _server->sendHeader("Location", "/auth");
+        _server->sendHeader("Location", "/auth?returnTo=%2Fnetworks");
         _server->send(302);
         return;
     }
@@ -591,7 +606,7 @@ void NetMan::_handleNetworks() {
 <script>
 async function loadNetworks() {
     try {
-        const response = await fetch('/networks');
+        const response = await fetch('/api/networks');
         const data = await response.json();
         
         let html = '';
@@ -616,7 +631,7 @@ async function removeNetwork(ssid) {
     if (!confirm('Remove network "' + ssid + '"?')) return;
     
     try {
-        const response = await fetch('/remove', {
+        const response = await fetch('/removenetwork', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
             body: 'ssid=' + encodeURIComponent(ssid)
@@ -661,9 +676,11 @@ void NetMan::_handleAddNetwork() {
     if (addNetwork(ssid, password)) {
         _server->send(200, "application/json", "{\"success\":true,\"message\":\"Network added successfully\"}");
         
-        // Try to connect to the new network
+        // Try to connect to the new network immediately and switch to STA on success
         if (!isConnected()) {
-            connectToKnownNetwork();
+            if (connectToKnownNetwork()) {
+                _switchToMode(MODE_STA);
+            }
         }
     } else {
         _server->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to add network\"}");
@@ -717,7 +734,7 @@ void NetMan::_handleReboot() {
 
 void NetMan::_handleOTA() {
     if (!_isAuthenticated()) {
-        _server->sendHeader("Location", "/auth");
+        _server->sendHeader("Location", "/auth?returnTo=%2Fota");
         _server->send(302);
         return;
     }
@@ -957,6 +974,23 @@ String NetMan::_getScanResultsJSON() {
     doc["ssid"] = getConnectedSSID();
     doc["ip"] = getIPAddress();
     
+    String result;
+    serializeJson(doc, result);
+    return result;
+}
+
+String NetMan::_getNetworksJSON() {
+    JsonDocument doc;
+    JsonArray nets = doc["networks"].to<JsonArray>();
+
+    for (const auto& network : _knownNetworks) {
+        JsonObject obj = nets.add<JsonObject>();
+        obj["ssid"] = network.ssid;
+        obj["enabled"] = network.enabled;
+    }
+
+    doc["count"] = _knownNetworks.size();
+
     String result;
     serializeJson(doc, result);
     return result;
@@ -1207,6 +1241,10 @@ void NetMan::_setupBasicWebServer() {
 void NetMan::_setupFullWebServer() {
     _server->on("/", HTTP_GET, [this]() { _handleRoot(); });
     _server->on("/networks", HTTP_GET, [this]() { _handleNetworks(); });
+    // JSON API endpoint used by the Networks page to list saved networks
+    _server->on("/api/networks", HTTP_GET, [this]() {
+        _server->send(200, "application/json", _getNetworksJSON());
+    });
     _server->on("/addnetwork", HTTP_POST, [this]() { _handleAddNetwork(); });
     _server->on("/removenetwork", HTTP_POST, [this]() { _handleRemoveNetwork(); });
     _server->on("/scan", HTTP_GET, [this]() { _handleScan(); });
@@ -1323,7 +1361,9 @@ async function login(event) {
         
         const data = await response.json();
         if (data.success) {
-            window.location.href = '/';
+            const params = new URLSearchParams(window.location.search);
+            const returnTo = params.get('returnTo') || '/';
+            window.location.href = returnTo;
         } else {
             alert('Invalid password');
         }

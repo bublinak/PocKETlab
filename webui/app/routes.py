@@ -74,41 +74,47 @@ def get_boards():
 def generate_va_data(settings):
     channel = settings.get('va_channel')
     mode_type = settings.get('va_mode_type') # CV or CC
-    
-    data = []
-    num_points = 20 # Default number of points
+    shunt_r = float(settings.get('va_shunt_resistance', 1.0))
 
+    data = []
+
+    # In CV: sweep driver voltage on selected channel; measure shunt voltage on channel B
     if mode_type == 'CV':
         start_v = float(settings.get('va_start_voltage', 0))
         end_v = float(settings.get('va_end_voltage', 1))
         step_v = float(settings.get('va_step_voltage', 0.1))
-        if step_v <= 0: step_v = 0.1 # Avoid division by zero or infinite loop
-        
-        voltages = np.arange(start_v, end_v + step_v, step_v)
-        if len(voltages) > 200: voltages = np.linspace(start_v, end_v, 200) # Limit points
+        if step_v <= 0: step_v = 0.1
 
-        for v in voltages:
-            # Simulate current based on voltage (e.g., simple resistor)
-            # Add some channel-specific behavior if desired
-            current = v / 100 + np.random.rand() * 0.0 # 100 Ohm resistor + noise
-            if channel == 'CH1':
-                current *= 1.2
-            elif channel == 'CH2':
-                current *= 1.5
-            data.append({"voltage": round(v, 3), "current": round(current, 4)})
-    elif mode_type == 'CC' and channel == 'CH2': # CC only for CH2
+        voltages = np.arange(start_v, end_v + step_v, step_v)
+        if len(voltages) > 500: voltages = np.linspace(start_v, end_v, 500)
+
+        # Simple DUT model: series of DUT_R with shunt in series, compute current and device voltage
+        DUT_R = 100.0 if channel == 'CH0' else (120.0 if channel == 'CH1' else 150.0)
+        for v_drv in voltages:
+            # Solve current through series (I = V / (R_dut + R_shunt))
+            I = v_drv / max(1e-9, (DUT_R + shunt_r))
+            v_shunt = I * shunt_r
+            v_device = v_drv - v_shunt
+            data.append({"voltage": round(v_device, 3), "current": round(I, 4)})
+
+    # In CC: sweep driver current; compute resulting device voltage accounting for shunt drop
+    elif mode_type == 'CC':
         start_i = float(settings.get('va_start_current', 0))
         end_i = float(settings.get('va_end_current', 0.1))
         step_i = float(settings.get('va_step_current', 0.01))
         if step_i <= 0: step_i = 0.01
 
         currents = np.arange(start_i, end_i + step_i, step_i)
-        if len(currents) > 200: currents = np.linspace(start_i, end_i, 200)
+        if len(currents) > 500: currents = np.linspace(start_i, end_i, 500)
 
-        for i in currents:
-            # Simulate voltage based on current (e.g., diode-like behavior)
-            voltage = 0.7 + np.log1p(i * 1000) * 0.1 + np.random.rand() * 0.0 # Simplified diode
-            data.append({"voltage": round(voltage, 3), "current": round(i, 4)})
+        DUT_R = 100.0 if channel == 'CH0' else (120.0 if channel == 'CH1' else 150.0)
+        for I in currents:
+            v_shunt = I * shunt_r
+            v_device = I * DUT_R
+            v_drv = v_device + v_shunt
+            # Report device voltage excluding shunt drop and measured current
+            data.append({"voltage": round(v_device, 3), "current": round(I, 4)})
+
     return data
 
 def generate_bode_data(settings):
@@ -339,10 +345,22 @@ def measure():
             measure_mode = request.form.get('measure_mode')
             print(f"[DEBUG] measure_mode: {measure_mode}")
             # Remove cs_model_file_input_name and cs_model_data from settings to avoid sending raw data
-            settings = {k: v for k, v in request.form.items() if k not in ['measure_mode', 'target_board', 'cs_model_file_input_name', 'cs_model_data']}
+            settings = {k: v for k, v in request.form.items() if k not in ['measure_mode', 'target_board', 'cs_model_file_input_name', 'cs_model_data', 'testbed_settings_json', 'no_flush']}
             print(f"[DEBUG] settings: {settings}")
             target_board = request.form.get('target_board', 'default')
             print(f"[DEBUG] target_board: {target_board}")
+
+            # Special handling for testbed JSON settings (UI patches/updates)
+            if measure_mode == 'testbed':
+                tb_json = request.form.get('testbed_settings_json')
+                if tb_json:
+                    try:
+                        parsed = json.loads(tb_json)
+                        if isinstance(parsed, dict):
+                            settings = parsed
+                            print(f"[DEBUG] Parsed testbed_settings_json with keys: {list(settings.keys())}")
+                    except Exception as e:
+                        print(f"[DEBUG] ERROR parsing testbed_settings_json: {e}")
 
             # Special handling for control system mode (system)
             if measure_mode == 'control_system' and settings.get('cs_mode') == 'system':
@@ -418,10 +436,38 @@ def measure():
                     return jsonify({"error": f"Model file structure error: {e}"}), 400
 
             print(f"[DEBUG] Final settings being sent to device: {settings}")
+            # Map VA settings to MQTT API spec keys
+            if measure_mode == 'va':
+                try:
+                    mapped = {
+                        'channel': settings.get('va_channel', 'CH0'),
+                        'mode_type': settings.get('va_mode_type', 'CV'),
+                        'shunt_resistance': float(settings.get('va_shunt_resistance', 1.0))
+                    }
+                    if mapped['mode_type'] == 'CV':
+                        mapped['cv_settings'] = {
+                            'start_voltage': float(settings.get('va_start_voltage', 0.0)),
+                            'end_voltage': float(settings.get('va_end_voltage', 5.0)),
+                            'step_voltage': float(settings.get('va_step_voltage', 0.1))
+                        }
+                    else:
+                        mapped['cc_settings'] = {
+                            'start_current': float(settings.get('va_start_current', 0.0)),
+                            'end_current': float(settings.get('va_end_current', 1.0)),
+                            'step_current': float(settings.get('va_step_current', 0.01))
+                        }
+                    settings = mapped
+                    print(f"[DEBUG] Mapped VA settings to spec: {settings}")
+                except Exception as e:
+                    print(f"[DEBUG] ERROR mapping VA settings: {e}")
             
             # Flush graph buffers before starting new measurement
-            print(f"[DEBUG] Flushing buffers for board: {target_board}, mode: {measure_mode}")
-            mqtt_client.flush_mode_buffer(target_board, measure_mode)
+            no_flush = request.form.get('no_flush') == '1'
+            if not no_flush:
+                print(f"[DEBUG] Flushing buffers for board: {target_board}, mode: {measure_mode}")
+                mqtt_client.flush_mode_buffer(target_board, measure_mode)
+            else:
+                print(f"[DEBUG] Skipping buffer flush due to no_flush flag")
             
             message_id = mqtt_client.publish_command(measure_mode, settings, target_board)
             print(f"[DEBUG] MQTT message_id: {message_id}")
@@ -515,10 +561,7 @@ def stop():
                     topic = f"pocketlab/{target_board}/command"  # Use 'command' not 'commands'
                     mqtt_client.client.publish(topic, json.dumps(command), qos=1)
                     print(f"[DEBUG] Published stop command to {topic}: {command}")
-                    
-                    # Clear continuous data buffer for this board
-                    mqtt_client.clear_continuous_data(target_board)
-                    print(f"[DEBUG] Cleared continuous data for board: {target_board}")
+                    print(f"[DEBUG] Keeping data visible after stop for board: {target_board}")
                     
             return jsonify({
                 "status": "stopped",
@@ -537,38 +580,51 @@ def stop():
 @main_bp.route('/export_csv', methods=['POST'])
 @login_required
 def export_csv():
-    data_to_export = request.json.get('data')
+    payload = request.json or {}
+    data_to_export = payload.get('data')
+    decimal_variant = payload.get('decimal_variant', 'dot')  # 'dot' or 'comma'
     if not data_to_export:
         return jsonify({"error": "No data to export"}), 400
 
+    # Determine delimiter and decimal character
+    decimal_char = ',' if decimal_variant == 'comma' else '.'
+    delimiter = ';' if decimal_variant == 'comma' else ','  # Use semicolon when comma is decimal separator
+
+    def fmt(v):
+        if isinstance(v, float):
+            # Format without scientific notation, trim trailing zeros
+            s = f"{v:.12f}".rstrip('0').rstrip('.')
+            if s == '' or s == '-':
+                s = '0'
+            if decimal_char != '.':
+                s = s.replace('.', decimal_char)
+            return s
+        if isinstance(v, int):
+            return str(v)
+        if v is None:
+            return ''
+        # For non-numeric keep as string (avoid replacing other dots)
+        return str(v)
+
     si = StringIO()
-    cw = csv.writer(si)
+    cw = csv.writer(si, delimiter=delimiter)
 
-    if not data_to_export: # Should not happen if button is enabled correctly
-        return Response(status=204)
-
-    # Write header
-    # Adjust for testbed and control_system data which are not lists of dicts
+    # Write header & rows
     if isinstance(data_to_export, list) and data_to_export:
         headers = list(data_to_export[0].keys())
         cw.writerow(headers)
-        # Write data rows
         for row in data_to_export:
-            cw.writerow([row[h] for h in headers])
-    elif isinstance(data_to_export, dict): # For single dict data like testbed
+            cw.writerow([fmt(row.get(h)) for h in headers])
+    elif isinstance(data_to_export, dict):
         headers = list(data_to_export.keys())
         cw.writerow(headers)
-        cw.writerow([data_to_export[h] for h in headers])
-    else: # No data or unsupported format
+        cw.writerow([fmt(data_to_export.get(h)) for h in headers])
+    else:
         return Response(status=204)
 
-
     output = si.getvalue()
-    return Response(
-        output,
-        mimetype="text/csv",
-        headers={"Content-disposition":
-                 "attachment; filename=measurement_data.csv"})
+    filename = 'measurement_data.csv'
+    return Response(output, mimetype='text/csv', headers={'Content-disposition': f'attachment; filename={filename}'})
 
 @main_bp.route('/get_continuous_data', methods=['GET'])
 @login_required
